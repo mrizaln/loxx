@@ -177,7 +177,7 @@ impl<'a> Lexer<'a> {
 
     fn whitespace_handler(&mut self, current: usize) -> usize {
         let index = self.source[current..]
-            .find(|c: char| !c.is_whitespace())
+            .find(|c: char| !c.is_whitespace() || c == '\n') // ignore newline
             .map(|i| i + current)
             .unwrap_or(self.source.len());
         index
