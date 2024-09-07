@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::exit;
 
 use clap::Parser;
-use loxi::{run_file, run_prompt};
+use loxi::{run_file, run_prompt, LoxError};
 
 #[derive(Parser, Debug)]
 #[clap(name = "loxi", about = "A Lox interpreter written")]
@@ -26,9 +26,13 @@ fn main() {
                 exit(1);
             }
 
-            if let Err(err) = run_file(path) {
-                eprintln!("{}", err);
-                exit(1);
+            match run_file(path) {
+                Ok(_) => (),
+                Err(LoxError::EmptyError(_)) => (),
+                Err(err) => {
+                    eprintln!("{}", err);
+                    exit(1);
+                }
             }
         }
         None => {
