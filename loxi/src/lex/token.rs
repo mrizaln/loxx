@@ -1,3 +1,7 @@
+#![allow(unused)]
+
+use std::fmt::{Display, Formatter};
+
 #[derive(Debug)]
 pub enum TokenValue {
     Punctuation(tokens::Punctuation),
@@ -11,12 +15,25 @@ pub enum TokenValue {
 #[derive(Debug)]
 pub struct Location {
     pub line: usize,
+    pub column: usize,
+}
+
+impl Display for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[at {}:{}]", self.line, self.column)
+    }
 }
 
 #[derive(Debug)]
 pub struct Token {
     pub value: TokenValue,
     pub loc: Location,
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Tok {}: {:?}", self.loc, self.value)
+    }
 }
 
 pub mod tokens {

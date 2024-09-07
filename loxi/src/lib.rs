@@ -3,7 +3,7 @@ use std::io::{self, stdin, stdout, Read, Write};
 use std::path::PathBuf;
 use thiserror::Error;
 
-use self::lex::Lexer;
+use self::lex::{Lexer, ScanResult};
 
 mod lex;
 
@@ -14,21 +14,46 @@ pub enum LoxError {
 
     #[error("Lexing error: {0}")]
     LexError(#[from] lex::LexError),
+
+    #[error("Empty file: {0}")]
+    EmptyError(PathBuf),
 }
 
 pub fn run(program: &str) -> Result<(), LoxError> {
-    let tokens = Lexer::new(program).scan_tokens()?;
-    tokens.iter().for_each(|tok| {
-        println!("{:?}", tok);
-    });
+    let ScanResult {
+        lines,
+        tokens,
+        errors,
+    } = Lexer::new(program).scan();
+
+    println!("\nerrors: {}", errors.len());
+    errors.iter().for_each(|err| println!("{err}"));
+
+    println!("\ntokens: {}", tokens.len());
+    tokens.iter().for_each(|tok| println!("{tok}"));
+
+    println!("\nlines: {}", lines.len());
+    lines.iter().for_each(|line| println!("{line:?}"));
+
     Ok(())
 }
 
 pub fn run_file(path: PathBuf) -> Result<(), LoxError> {
     let contents = {
         let mut string = String::new();
-        let mut file = File::open(path)?;
+        let mut file = File::open(path.clone())?;
         file.read_to_string(&mut string)?;
+
+        match string.is_empty() {
+            true => return Err(LoxError::EmptyError(path)),
+            false => {
+                // make sure the content of the file ends with newline
+                if string.chars().last().unwrap() != '\n' {
+                    string.push('\n');
+                }
+            }
+        }
+
         string
     };
 
