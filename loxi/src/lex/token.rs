@@ -1,18 +1,16 @@
-#![allow(unused)]
-
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum TokenValue {
     Punctuation(tokens::Punctuation),
     Operator(tokens::Operator),
-    Literal(tokens::Literal),
     Keyword(tokens::Keyword),
+    Literal(tokens::Literal),
     Eof,
 }
 
 // TODO: add other information like filename and column
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Location {
     pub line: usize,
     pub column: usize,
@@ -24,7 +22,7 @@ impl Display for Location {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub struct Token {
     pub value: TokenValue,
     pub loc: Location,
@@ -41,7 +39,7 @@ pub mod tokens {
         InvalidToken,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
     pub enum Punctuation {
         ParenLeft,
         ParenRight,
@@ -83,7 +81,7 @@ pub mod tokens {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
     pub enum Operator {
         Bang,
         BangEqual,
@@ -140,7 +138,7 @@ pub mod tokens {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
     pub enum Keyword {
         True,
         False,
@@ -209,7 +207,7 @@ pub mod tokens {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, PartialOrd)]
     pub enum Literal {
         String(String),
         Identifier(String),

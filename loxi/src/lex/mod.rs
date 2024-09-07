@@ -1,17 +1,16 @@
 use std::iter::Peekable;
 use std::str::CharIndices;
-
 use thiserror::Error;
 
-pub mod token;
-
+use self::token::{tokens, Location, Token, TokenValue};
 use crate::util;
 
-use self::token::{tokens, Location, Token, TokenValue};
+mod tests;
+pub mod token;
 
 #[derive(Debug, Error)]
 pub enum LexError {
-    #[error("{0} Unknown token {1:?} ({2:#x})")]
+    #[error("{0} Unknown token ({1}) [{2:#x}]")]
     UnknownToken(Location, char, u32),
 
     #[error("{0} Unterminated string")]
