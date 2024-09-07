@@ -6,6 +6,7 @@ use thiserror::Error;
 use self::lex::{Lexer, ScanResult};
 
 mod lex;
+mod util;
 
 #[derive(Debug, Error)]
 pub enum LoxError {
