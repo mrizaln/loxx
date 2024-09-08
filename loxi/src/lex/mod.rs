@@ -66,15 +66,22 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[rustfmt::skip]
     fn scan_token(&mut self, current: usize, single: char) {
-        match single {
-            '\n' => self.newline_handler(current),
-            '/' => self.slash_handler(current),
-            '"' => self.string_handler(current),
-            c if c.is_digit(10) => self.number_handler(current),
-            c if c.is_whitespace() => self.whitespace_handler(),
-            c if Lexer::is_identifier(c) => self.identifier_handler(current, single),
-            _ => self.other_handler(current, single),
+        match single.is_ascii() {
+            true => match single {
+                '\n'                         => self.newline_handler(current),
+                '/'                          => self.slash_handler(current),
+                '"'                          => self.string_handler(current),
+                c if c.is_digit(10)          => self.number_handler(current),
+                c if c.is_whitespace()       => self.whitespace_handler(),
+                c if Lexer::is_identifier(c) => self.ascii_identifier_handler(current, single),
+                _                            => self.other_handler(current, single),
+            },
+            false => match single {
+                c if c.is_whitespace()       => self.whitespace_handler(),
+                _                            => self.unicode_identifier_handler(current, single),
+            },
         }
     }
 
@@ -154,7 +161,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // NOTE: I do the addition here since I can't peek the next next char. I must advance from
+        // NOTE: I add Dot token here since I can't peek the next next char. I must advance from
         // the dot on the if let block above so on the next iteration the dot is already consumed.
         if trailing_dot {
             self.add_token(tok! { [self.loc_rel(index)] -> Punctuation::Dot });
@@ -165,7 +172,7 @@ impl<'a> Lexer<'a> {
         self.advance_while(|(_, ch)| ch.is_whitespace() && *ch != '\n');
     }
 
-    fn identifier_handler(&mut self, current: usize, single: char) {
+    fn ascii_identifier_handler(&mut self, current: usize, single: char) {
         let count = self.advance_while(|(_, ch)| Lexer::is_identifier(*ch));
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
@@ -177,6 +184,15 @@ impl<'a> Lexer<'a> {
             value: token,
             loc: self.loc_rel(current),
         });
+    }
+
+    // NOTE: any non-whitespace unicode is considered identifier
+    // WARN: braille blank is not considered as whitespace!
+    fn unicode_identifier_handler(&mut self, current: usize, single: char) {
+        let count = self.advance_while(|(_, ch)| !ch.is_whitespace());
+        let end = current + count + single.len_utf8();
+        let value = self.source[current..end].to_string();
+        self.add_token(tok! { [self.loc_rel(current)] -> Literal::Identifier = value });
     }
 
     fn other_handler(&mut self, current: usize, single: char) {
@@ -268,7 +284,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // TODOL maybe support unicode identifier as well?
+    // NOTE: only works for ascii
     fn is_identifier(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
     }
