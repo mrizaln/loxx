@@ -67,21 +67,36 @@ impl<'a> Lexer<'a> {
     }
 
     #[rustfmt::skip]
+    #[cfg(feature = "unicode")]
     fn scan_token(&mut self, current: usize, single: char) {
         match single.is_ascii() {
             true => match single {
-                '\n'                         => self.newline_handler(current),
-                '/'                          => self.slash_handler(current),
-                '"'                          => self.string_handler(current),
-                c if c.is_digit(10)          => self.number_handler(current),
-                c if c.is_whitespace()       => self.whitespace_handler(),
-                c if Lexer::is_identifier(c) => self.ascii_identifier_handler(current, single),
-                _                            => self.other_handler(current, single),
+                '\n'                        => self.newline_handler(current),
+                '/'                         => self.slash_handler(current),
+                '"'                         => self.string_handler(current),
+                c if c.is_digit(10)         => self.number_handler(current),
+                c if c.is_whitespace()      => self.whitespace_handler(),
+                c if is_ascii_identifier(c) => self.ascii_identifier_handler(current, single),
+                _                           => self.other_handler(current, single),
             },
             false => match single {
-                c if c.is_whitespace()       => self.whitespace_handler(),
-                _                            => self.unicode_identifier_handler(current, single),
+                c if c.is_whitespace()      => self.whitespace_handler(),
+                _                           => self.unicode_identifier_handler(current, single),
             },
+        }
+    }
+
+    #[rustfmt::skip]
+    #[cfg(not(feature = "unicode"))]
+    fn scan_token(&mut self, current: usize, single: char) {
+        match single {
+            '\n'                        => self.newline_handler(current),
+            '/'                         => self.slash_handler(current),
+            '"'                         => self.string_handler(current),
+            c if c.is_digit(10)         => self.number_handler(current),
+            c if c.is_whitespace()      => self.whitespace_handler(),
+            c if is_ascii_identifier(c) => self.ascii_identifier_handler(current, single),
+            _                           => self.other_handler(current, single),
         }
     }
 
@@ -173,7 +188,16 @@ impl<'a> Lexer<'a> {
     }
 
     fn ascii_identifier_handler(&mut self, current: usize, single: char) {
-        let count = self.advance_while(|(_, ch)| !(Lexer::is_token(*ch) | ch.is_whitespace()));
+        let count = self.advance_while(|(_, ch)| {
+            if cfg!(feature = "unicode") {
+                match ch.is_ascii() {
+                    true => is_ascii_identifier(*ch),
+                    false => !ch.is_whitespace(),
+                }
+            } else {
+                is_ascii_identifier(*ch)
+            }
+        });
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
 
@@ -187,8 +211,12 @@ impl<'a> Lexer<'a> {
 
     // NOTE: any non-whitespace unicode is considered identifier
     // WARN: braille blank is not considered as whitespace!
+    #[cfg(feature = "unicode")]
     fn unicode_identifier_handler(&mut self, current: usize, single: char) {
-        let count = self.advance_while(|(_, ch)| !(Lexer::is_token(*ch) | ch.is_whitespace()));
+        let count = self.advance_while(|(_, ch)| match ch.is_ascii() {
+            true => is_ascii_identifier(*ch),
+            false => !ch.is_whitespace(),
+        });
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
         self.add_token(tok! { [self.loc_rel(current)] -> Literal::Identifier = value });
@@ -282,23 +310,6 @@ impl<'a> Lexer<'a> {
             Err(err) => panic!("Fatal error: {err}"),
         }
     }
-
-    // NOTE: only works for ascii
-    fn is_identifier(c: char) -> bool {
-        c.is_ascii_alphanumeric() || c == '_'
-    }
-
-    fn is_token(ch: char) -> bool {
-        let mut buf = [0u8; 4];
-        let str = util::to_str(&mut buf, &[ch]);
-        let op = TryInto::<tokens::Operator>::try_into(str);
-        let punc = TryInto::<tokens::Punctuation>::try_into(ch);
-
-        match (op, punc) {
-            (Err(_), Err(_)) => false,
-            _ => true,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -330,4 +341,9 @@ impl LineLocation {
             column,
         })
     }
+}
+
+// NOTE: only works for ascii
+fn is_ascii_identifier(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
 }

@@ -3,6 +3,10 @@ name = "loxi"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# default = ["unicode"]
+unicode = []
+
 [dependencies]
 clap = { version = "4.5.17", features = ["derive"] }
 indoc = "2.0.5"
