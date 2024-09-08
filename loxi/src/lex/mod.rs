@@ -6,7 +6,7 @@ use thiserror::Error;
 use self::token::{macros::tok, tokens, Location, Token, TokenValue};
 use crate::util;
 
-mod tests;
+mod test;
 pub mod token;
 
 #[derive(Debug, Error)]
@@ -173,7 +173,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn ascii_identifier_handler(&mut self, current: usize, single: char) {
-        let count = self.advance_while(|(_, ch)| !ch.is_whitespace());
+        let count = self.advance_while(|(_, ch)| !(Lexer::is_token(*ch) | ch.is_whitespace()));
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
 
@@ -188,7 +188,7 @@ impl<'a> Lexer<'a> {
     // NOTE: any non-whitespace unicode is considered identifier
     // WARN: braille blank is not considered as whitespace!
     fn unicode_identifier_handler(&mut self, current: usize, single: char) {
-        let count = self.advance_while(|(_, ch)| !ch.is_whitespace());
+        let count = self.advance_while(|(_, ch)| !(Lexer::is_token(*ch) | ch.is_whitespace()));
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
         self.add_token(tok! { [self.loc_rel(current)] -> Literal::Identifier = value });
@@ -286,6 +286,20 @@ impl<'a> Lexer<'a> {
     // NOTE: only works for ascii
     fn is_identifier(c: char) -> bool {
         c.is_ascii_alphanumeric() || c == '_'
+    }
+
+    fn is_token(ch: char) -> bool {
+        let mut buf = [0u8; 4];
+        let punc = TryInto::<tokens::Punctuation>::try_into(ch);
+
+        let str = util::to_str(&mut buf, &[ch]);
+        let op = TryInto::<tokens::Operator>::try_into(str);
+
+        if let (Err(_), Err(_)) = (punc, op) {
+            false
+        } else {
+            true
+        }
     }
 }
 
