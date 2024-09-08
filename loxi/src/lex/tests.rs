@@ -3,32 +3,12 @@
 use indoc::indoc;
 
 use super::*;
+use token::macros::tok;
 
 static HELLO_WORLD: &str = indoc! { r#"
     var hello = "Hello world!";
     print hello;
 "# };
-
-macro_rules! tok {
-    {[$line:expr,$col:expr] -> $type:ident} => {
-        Token {
-            value: TokenValue::$type,
-            loc: Location { line: $line, column: $col },
-        }
-    };
-    {[$line:expr,$col:expr] -> $type:ident::$value:ident} => {
-        Token {
-            value: TokenValue::$type(tokens::$type::$value),
-            loc: Location { line: $line, column: $col },
-        }
-    };
-    {[$line:expr,$col:expr] -> $type:ident::$name:ident = $value:expr} => {
-        Token {
-            value: TokenValue::$type(tokens::$type::$name($value)),
-            loc: Location { line: $line, column: $col },
-        }
-    };
-}
 
 #[test]
 fn hello_test() {

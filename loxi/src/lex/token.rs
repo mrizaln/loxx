@@ -214,3 +214,58 @@ pub mod tokens {
         Number(f64),
     }
 }
+
+pub mod macros {
+    macro_rules! tok {
+        {[$line:expr,$col:expr] -> $type:ident} => {
+            Token {
+                value: TokenValue::$type,
+                loc: Location { line: $line, column: $col },
+            }
+        };
+        {[$line:expr,$col:expr] -> $type:ident = $value:expr} => {
+            Token {
+                value: TokenValue::$type($value),
+                loc: Location { line: $line, column: $col },
+            }
+        };
+        {[$line:expr,$col:expr] -> $type:ident::$value:ident} => {
+            Token {
+                value: TokenValue::$type(tokens::$type::$value),
+                loc: Location { line: $line, column: $col },
+            }
+        };
+        {[$line:expr,$col:expr] -> $type:ident::$name:ident = $value:expr} => {
+            Token {
+                value: TokenValue::$type(tokens::$type::$name($value)),
+                loc: Location { line: $line, column: $col },
+            }
+        };
+        {[$loc:expr] -> $type:ident} => {
+            Token {
+                value: TokenValue::$type,
+                loc: $loc,
+            }
+        };
+        {[$loc:expr] -> $type:ident = $value:expr} => {
+            Token {
+                value: TokenValue::$type($value),
+                loc: $loc,
+            }
+        };
+        {[$loc:expr] -> $type:ident::$value:ident} => {
+            Token {
+                value: TokenValue::$type(tokens::$type::$value),
+                loc:  $loc,
+            }
+        };
+        {[$loc:expr] -> $type:ident::$name:ident = $value:expr} => {
+            Token {
+                value: TokenValue::$type(tokens::$type::$name($value)),
+                loc: $loc,
+            }
+        };
+    }
+
+    pub(crate) use tok;
+}

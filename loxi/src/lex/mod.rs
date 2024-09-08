@@ -1,8 +1,9 @@
+use core::panic;
 use std::iter::Peekable;
 use std::str::CharIndices;
 use thiserror::Error;
 
-use self::token::{tokens, Location, Token, TokenValue};
+use self::token::{macros::tok, tokens, Location, Token, TokenValue};
 use crate::util;
 
 mod tests;
@@ -56,11 +57,7 @@ impl<'a> Lexer<'a> {
             // simple debugging to see whether my code is stalling, or just slow :D
             print!("\r{} chars out of {} scanned", i, self.source.len());
         }
-
-        self.tokens.push(Token {
-            value: TokenValue::Eof,
-            loc: self.line.loc_rel(self.source.len()).unwrap(),
-        });
+        self.add_token(tok! { [self.loc_rel(self.source.len())] -> Eof });
 
         ScanResult {
             lines: self.lines,
@@ -101,10 +98,7 @@ impl<'a> Lexer<'a> {
             return;
         }
 
-        self.tokens.push(Token {
-            value: TokenValue::Operator(tokens::Operator::Slash),
-            loc: self.line.loc_rel(current).unwrap(),
-        });
+        self.add_token(tok! { [self.loc_rel(current)] -> Operator::Slash });
     }
 
     fn string_handler(&mut self, current: usize) {
@@ -123,21 +117,16 @@ impl<'a> Lexer<'a> {
         match index {
             Some(idx) => {
                 let value = self.source[current + 1..idx].to_string();
-                self.tokens.push(Token {
-                    value: TokenValue::Literal(tokens::Literal::String(value)),
-                    loc: start_line.loc_rel(current).unwrap(),
+                self.add_token(tok! {
+                    [start_line.loc_rel(current).unwrap()] -> Literal::String = value
                 });
             }
-            None => {
-                self.errors.push(LexError::UnterminatedString(
-                    start_line.loc_rel(current).unwrap(),
-                ));
-            }
+            None => self.add_error(LexError::UnterminatedString(
+                start_line.loc_rel(current).unwrap(),
+            )),
         }
     }
 
-    // TODO: add checks on number of dots encountered
-    // TODO: check whether at the end of the number an identifier exist, error if yes
     fn number_handler(&mut self, current: usize) {
         let count = self.advance_while(|(_, ch)| ch.is_digit(10));
         let mut index = current + count;
@@ -155,14 +144,11 @@ impl<'a> Lexer<'a> {
 
         match self.source[current..index + 1].parse::<f64>() {
             Ok(value) => {
-                self.tokens.push(Token {
-                    value: TokenValue::Literal(tokens::Literal::Number(value)),
-                    loc: self.line.loc_rel(current).unwrap(),
-                });
+                self.add_token(tok! { [self.loc_rel(current)] -> Literal::Number = value });
             }
             Err(_) => {
-                self.errors.push(LexError::UnableToParseNumber(
-                    self.line.loc_rel(current).unwrap(),
+                self.add_error(LexError::UnableToParseNumber(
+                    self.loc_rel(current),
                     self.source[current..index + 1].to_string(),
                 ));
             }
@@ -171,10 +157,7 @@ impl<'a> Lexer<'a> {
         // NOTE: I do the addition here since I can't peek the next next char. I must advance from
         // the dot on the if let block above so on the next iteration the dot is already consumed.
         if trailing_dot {
-            self.tokens.push(Token {
-                value: TokenValue::Punctuation(tokens::Punctuation::Dot),
-                loc: self.line.loc_rel(index).unwrap(),
-            });
+            self.add_token(tok! { [self.loc_rel(index)] -> Punctuation::Dot });
         }
     }
 
@@ -190,18 +173,15 @@ impl<'a> Lexer<'a> {
             Ok(keyword) => TokenValue::Keyword(keyword),
             Err(_) => TokenValue::Literal(tokens::Literal::Identifier(value)),
         };
-        self.tokens.push(Token {
+        self.add_token(Token {
             value: token,
-            loc: self.line.loc_rel(current).unwrap(),
+            loc: self.loc_rel(current),
         });
     }
 
     fn other_handler(&mut self, current: usize, single: char) {
         if let Ok(token) = tokens::Punctuation::try_from(single) {
-            self.tokens.push(Token {
-                value: TokenValue::Punctuation(token),
-                loc: self.line.loc_rel(current).unwrap(),
-            });
+            self.add_token(tok! { [self.loc_rel(current)] -> Punctuation = token });
             return;
         }
 
@@ -211,10 +191,7 @@ impl<'a> Lexer<'a> {
         if let Some((_, ch)) = self.peek() {
             let double_slice = util::to_str(&mut two_char_buf, &[single, *ch]);
             if let Ok(token) = tokens::Operator::try_from(double_slice) {
-                self.tokens.push(Token {
-                    value: TokenValue::Operator(token),
-                    loc: self.line.loc_rel(current).unwrap(),
-                });
+                self.add_token(tok! { [self.loc_rel(current)] -> Operator = token });
                 let _ = self.advance();
                 return;
             }
@@ -223,18 +200,22 @@ impl<'a> Lexer<'a> {
         // for single chars operators
         let single_slice = util::to_str(&mut two_char_buf, &[single]);
         if let Ok(token) = tokens::Operator::try_from(single_slice) {
-            self.tokens.push(Token {
-                value: TokenValue::Operator(token),
-                loc: self.line.loc_rel(current).unwrap(),
-            });
+            self.add_token(tok! { [self.loc_rel(current)] -> Operator = token });
             return;
         }
 
-        self.errors.push(LexError::UnknownToken(
-            self.line.loc_rel(current).unwrap(),
+        self.add_error(LexError::UnknownToken(
+            self.loc_rel(current),
             single,
             single as u32,
         ));
+    }
+
+    fn add_token(&mut self, token: Token) {
+        self.tokens.push(token)
+    }
+    fn add_error(&mut self, err: LexError) {
+        self.errors.push(err)
     }
 
     fn peek(&mut self) -> Option<&(usize, char)> {
@@ -266,6 +247,14 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn loc_rel(&self, index: usize) -> Location {
+        match self.line.loc_rel(index) {
+            Ok(loc) => loc,
+            Err(err) => panic!("Fatal error: {err}"),
+        }
+    }
+
+    // TODOL maybe 
     fn is_identifier(c: char) -> bool {
         c.is_alphanumeric() || c == '_'
     }
@@ -277,21 +266,27 @@ struct LineLocation {
     pub start: usize,
 }
 
+#[derive(Debug, Error)]
+enum LineLocationError {
+    #[error("Index less than start: {index} < {start}")]
+    IndexLessThanStart { start: usize, index: usize },
+}
+
 impl LineLocation {
-    pub fn col_rel(&self, index: usize) -> Option<usize> {
+    pub fn col_rel(&self, index: usize) -> Result<usize, LineLocationError> {
         match index {
-            i if i < self.start => None,
-            _ => Some(index - self.start + 1), // 1-indexed
+            i if i < self.start => Err(LineLocationError::IndexLessThanStart {
+                start: self.start,
+                index,
+            }),
+            _ => Ok(index - self.start + 1), // 1-indexed
         }
     }
 
-    pub fn loc_rel(&self, index: usize) -> Option<Location> {
-        match self.col_rel(index) {
-            Some(column) => Some(Location {
-                line: self.index,
-                column,
-            }),
-            None => None,
-        }
+    pub fn loc_rel(&self, index: usize) -> Result<Location, LineLocationError> {
+        self.col_rel(index).map(|column| Location {
+            line: self.index,
+            column,
+        })
     }
 }
