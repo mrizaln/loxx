@@ -173,17 +173,16 @@ impl<'a> Lexer<'a> {
     }
 
     fn ascii_identifier_handler(&mut self, current: usize, single: char) {
-        let count = self.advance_while(|(_, ch)| Lexer::is_identifier(*ch));
+        let count = self.advance_while(|(_, ch)| !ch.is_whitespace());
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
+
         let token = match tokens::Keyword::try_from(value.as_str()) {
-            Ok(keyword) => TokenValue::Keyword(keyword),
-            Err(_) => TokenValue::Literal(tokens::Literal::Identifier(value)),
+            Ok(keyword) => tok! { [self.loc_rel(current)] -> Keyword = keyword },
+            Err(_) => tok! { [self.loc_rel(current)] -> Literal::Identifier = value },
         };
-        self.add_token(Token {
-            value: token,
-            loc: self.loc_rel(current),
-        });
+
+        self.add_token(token);
     }
 
     // NOTE: any non-whitespace unicode is considered identifier
