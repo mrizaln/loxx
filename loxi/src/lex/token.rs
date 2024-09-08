@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum TokenValue {
     Punctuation(tokens::Punctuation),
     Operator(tokens::Operator),
@@ -9,8 +9,7 @@ pub enum TokenValue {
     Eof,
 }
 
-// TODO: add other information like filename and column
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Location {
     pub line: usize,
     pub column: usize,
@@ -22,7 +21,7 @@ impl Display for Location {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Token {
     pub value: TokenValue,
     pub loc: Location,
@@ -39,7 +38,7 @@ pub mod tokens {
         InvalidToken,
     }
 
-    #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
     pub enum Punctuation {
         ParenLeft,
         ParenRight,
@@ -50,7 +49,7 @@ pub mod tokens {
         Semicolon,
     }
 
-    impl Into<char> for Punctuation {
+    impl Into<char> for &Punctuation {
         fn into(self) -> char {
             match self {
                 Punctuation::ParenLeft => '(',
@@ -81,7 +80,7 @@ pub mod tokens {
         }
     }
 
-    #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
     pub enum Operator {
         Bang,
         BangEqual,
@@ -97,7 +96,7 @@ pub mod tokens {
         Slash,
     }
 
-    impl Into<&str> for Operator {
+    impl Into<&str> for &Operator {
         fn into(self) -> &'static str {
             match self {
                 Operator::Bang => "!",
@@ -138,7 +137,7 @@ pub mod tokens {
         }
     }
 
-    #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
     pub enum Keyword {
         True,
         False,
@@ -158,7 +157,7 @@ pub mod tokens {
         Var,
     }
 
-    impl Into<&str> for Keyword {
+    impl Into<&str> for &Keyword {
         fn into(self) -> &'static str {
             match self {
                 Keyword::True => "true",
@@ -207,11 +206,21 @@ pub mod tokens {
         }
     }
 
-    #[derive(Debug, PartialEq, PartialOrd)]
+    #[derive(Clone, Debug, PartialEq, PartialOrd)]
     pub enum Literal {
         String(String),
         Identifier(String),
         Number(f64),
+    }
+
+    impl Into<String> for &Literal {
+        fn into(self) -> String {
+            match self {
+                Literal::String(str) => str.clone(),
+                Literal::Identifier(ident) => ident.clone(),
+                Literal::Number(num) => format!("{num}"),
+            }
+        }
     }
 }
 

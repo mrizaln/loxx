@@ -290,15 +290,13 @@ impl<'a> Lexer<'a> {
 
     fn is_token(ch: char) -> bool {
         let mut buf = [0u8; 4];
-        let punc = TryInto::<tokens::Punctuation>::try_into(ch);
-
         let str = util::to_str(&mut buf, &[ch]);
         let op = TryInto::<tokens::Operator>::try_into(str);
+        let punc = TryInto::<tokens::Punctuation>::try_into(ch);
 
-        if let (Err(_), Err(_)) = (punc, op) {
-            false
-        } else {
-            true
+        match (op, punc) {
+            (Err(_), Err(_)) => false,
+            _ => true,
         }
     }
 }
