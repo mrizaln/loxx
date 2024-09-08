@@ -55,7 +55,7 @@ impl<'a> Lexer<'a> {
             self.scan_token(i, ch);
 
             // simple debugging to see whether my code is stalling, or just slow :D
-            print!("\r{} chars out of {} scanned", i, self.source.len());
+            // print!("\r{} chars out of {} scanned", i, self.source.len());
         }
         self.add_token(tok! { [self.loc_rel(self.source.len())] -> Eof });
 
@@ -73,7 +73,7 @@ impl<'a> Lexer<'a> {
             '"' => self.string_handler(current),
             c if c.is_digit(10) => self.number_handler(current),
             c if c.is_whitespace() => self.whitespace_handler(),
-            c if Lexer::is_identifier(c) => self.alphabetic_handler(current),
+            c if Lexer::is_identifier(c) => self.identifier_handler(current, single),
             _ => self.other_handler(current, single),
         }
     }
@@ -165,10 +165,10 @@ impl<'a> Lexer<'a> {
         self.advance_while(|(_, ch)| ch.is_whitespace() && *ch != '\n');
     }
 
-    fn alphabetic_handler(&mut self, current: usize) {
+    fn identifier_handler(&mut self, current: usize, single: char) {
         let count = self.advance_while(|(_, ch)| Lexer::is_identifier(*ch));
-        let index = current + count;
-        let value = self.source[current..index + 1].to_string();
+        let end = current + count + single.len_utf8();
+        let value = self.source[current..end].to_string();
         let token = match tokens::Keyword::try_from(value.as_str()) {
             Ok(keyword) => TokenValue::Keyword(keyword),
             Err(_) => TokenValue::Literal(tokens::Literal::Identifier(value)),
@@ -233,9 +233,23 @@ impl<'a> Lexer<'a> {
         F: Fn(&(usize, char)) -> bool,
     {
         let mut count = 0;
-        while let Some(true) = self.peek().map(&pred) {
-            count += 1;
-            let _ = self.advance();
+        let map = |res: &(usize, char)| {
+            let cont = pred(res);
+            let size = res.1.len_utf8();
+            match cont {
+                true => size,
+                false => std::usize::MAX,
+            }
+        };
+
+        while let Some(size) = self.peek().map(map) {
+            match size {
+                std::usize::MAX => break,
+                _ => {
+                    count += size;
+                    let _ = self.advance();
+                }
+            }
         }
         count
     }
@@ -254,9 +268,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // TODOL maybe 
+    // TODOL maybe support unicode identifier as well?
     fn is_identifier(c: char) -> bool {
-        c.is_alphanumeric() || c == '_'
+        c.is_ascii_alphanumeric() || c == '_'
     }
 }
 
