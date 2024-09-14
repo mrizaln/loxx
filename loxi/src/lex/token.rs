@@ -1,3 +1,4 @@
+use crate::util::Location;
 use std::fmt::{Display, Formatter};
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -7,18 +8,6 @@ pub enum TokenValue {
     Keyword(tokens::Keyword),
     Literal(tokens::Literal),
     Eof,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Location {
-    pub line: usize,
-    pub column: usize,
-}
-
-impl Display for Location {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[at {}:{}]", self.line, self.column)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]

@@ -3,8 +3,8 @@ use std::iter::Peekable;
 use std::str::CharIndices;
 use thiserror::Error;
 
-use self::token::{macros::tok, tokens, Location, Token, TokenValue};
-use crate::util;
+use self::token::{macros::tok, tokens, Token, TokenValue};
+use crate::util::{self, Location};
 
 mod test;
 pub mod token;
