@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use super::token;
+use crate::util::TokLoc;
 
 ///! Lox Grammar (unfinished)
 ///  ------------------------
@@ -16,15 +17,15 @@ use super::token;
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
     Literal {
-        value: token::Literal,
+        value: TokLoc<token::Literal>,
     },
     Unary {
-        operator: token::UnaryOp,
+        operator: TokLoc<token::UnaryOp>,
         right: Box<Expr>,
     },
     Binary {
         left: Box<Expr>,
-        operator: token::BinaryOp,
+        operator: TokLoc<token::BinaryOp>,
         right: Box<Expr>,
     },
     Grouping {
@@ -35,9 +36,9 @@ pub enum Expr {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string: String = match &self {
-            Expr::Literal { value } => value.into(),
+            Expr::Literal { value } => (&value.tok).into(),
             Expr::Unary { operator, right } => {
-                let op: &str = operator.into();
+                let op: &str = (&operator.tok).into();
                 format!("({op} {right})")
             }
             Expr::Binary {
@@ -45,7 +46,7 @@ impl Display for Expr {
                 operator,
                 right,
             } => {
-                let op: &str = operator.into();
+                let op: &str = (&operator.tok).into();
                 format!("({op} {left} {right})")
             }
 

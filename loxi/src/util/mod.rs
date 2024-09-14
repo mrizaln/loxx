@@ -1,5 +1,13 @@
 use std::fmt::{Display, Formatter};
 
+pub trait Token {}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct TokLoc<T: Token> {
+    pub tok: T,
+    pub loc: Location,
+}
+
 // TODO: add other information like filename and column
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Location {

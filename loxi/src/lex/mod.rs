@@ -1,13 +1,34 @@
-use core::panic;
+use std::fmt::{Display, Formatter};
 use std::iter::Peekable;
 use std::str::CharIndices;
 use thiserror::Error;
 
-use self::token::{macros::tok, tokens, Token, TokenValue};
-use crate::util::{self, Location};
+use crate::util::{self, Location, TokLoc};
+use macros::tok;
 
 mod test;
 pub mod token;
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum Token {
+    Punctuation(TokLoc<token::Punctuation>),
+    Operator(TokLoc<token::Operator>),
+    Keyword(TokLoc<token::Keyword>),
+    Literal(TokLoc<token::Literal>),
+    Eof(Location),
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Punctuation(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
+            Token::Operator(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
+            Token::Keyword(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
+            Token::Literal(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
+            Token::Eof(loc) => write!(f, "Tok {}: EOF", loc),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum LexError {
@@ -57,7 +78,7 @@ impl<'a> Lexer<'a> {
             // simple debugging to see whether my code is stalling, or just slow :D
             // print!("\r{} chars out of {} scanned", i, self.source.len());
         }
-        self.add_token(tok! { [self.loc_rel(self.source.len())] -> Eof });
+        self.add_token(Token::Eof(self.loc_rel(self.source.len())));
 
         ScanResult {
             lines: self.lines,
@@ -201,7 +222,7 @@ impl<'a> Lexer<'a> {
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
 
-        let token = match tokens::Keyword::try_from(value.as_str()) {
+        let token = match token::Keyword::try_from(value.as_str()) {
             Ok(keyword) => tok! { [self.loc_rel(current)] -> Keyword = keyword },
             Err(_) => tok! { [self.loc_rel(current)] -> Literal::Identifier = value },
         };
@@ -223,7 +244,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn other_handler(&mut self, current: usize, single: char) {
-        if let Ok(token) = tokens::Punctuation::try_from(single) {
+        if let Ok(token) = token::Punctuation::try_from(single) {
             self.add_token(tok! { [self.loc_rel(current)] -> Punctuation = token });
             return;
         }
@@ -233,7 +254,7 @@ impl<'a> Lexer<'a> {
         // for double chars operators
         if let Some((_, ch)) = self.peek() {
             let double_slice = util::to_str(&mut two_char_buf, &[single, *ch]);
-            if let Ok(token) = tokens::Operator::try_from(double_slice) {
+            if let Ok(token) = token::Operator::try_from(double_slice) {
                 self.add_token(tok! { [self.loc_rel(current)] -> Operator = token });
                 let _ = self.advance();
                 return;
@@ -242,7 +263,7 @@ impl<'a> Lexer<'a> {
 
         // for single chars operators
         let single_slice = util::to_str(&mut two_char_buf, &[single]);
-        if let Ok(token) = tokens::Operator::try_from(single_slice) {
+        if let Ok(token) = token::Operator::try_from(single_slice) {
             self.add_token(tok! { [self.loc_rel(current)] -> Operator = token });
             return;
         }
@@ -346,4 +367,29 @@ impl LineLocation {
 // NOTE: only works for ascii
 fn is_ascii_identifier(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+mod macros {
+    macro_rules! tok {
+        {[$loc:expr] -> $type:ident = $value:expr} => {
+            Token::$type(TokLoc {
+                tok: $value,
+                loc: $loc,
+            })
+        };
+        {[$loc:expr] -> $type:ident::$value:ident} => {
+            Token::$type(TokLoc {
+                tok: token::$type::$value,
+                loc: $loc,
+            })
+        };
+        {[$loc:expr] -> $type:ident::$name:ident = $value:expr} => {
+            Token::$type(TokLoc {
+                tok: token::$type::$name($value),
+                loc: $loc,
+            })
+        };
+    }
+
+    pub(crate) use tok;
 }

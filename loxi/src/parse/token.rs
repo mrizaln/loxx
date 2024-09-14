@@ -1,3 +1,5 @@
+use crate::util::Token;
+
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
     Number(f64),
@@ -64,3 +66,7 @@ impl Into<&str> for &BinaryOp {
         }
     }
 }
+
+impl Token for Literal {}
+impl Token for UnaryOp {}
+impl Token for BinaryOp {}
