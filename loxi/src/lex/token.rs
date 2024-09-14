@@ -25,6 +25,20 @@ impl Into<char> for &Punctuation {
     }
 }
 
+impl Into<&str> for &Punctuation {
+    fn into(self) -> &'static str {
+        match self {
+            Punctuation::ParenLeft => "(",
+            Punctuation::ParenRight => ")",
+            Punctuation::BraceLeft => "{",
+            Punctuation::BraceRight => "}",
+            Punctuation::Comma => ",",
+            Punctuation::Dot => ".",
+            Punctuation::Semicolon => ";",
+        }
+    }
+}
+
 impl TryFrom<char> for Punctuation {
     type Error = ();
 

@@ -18,6 +18,32 @@ pub enum Token {
     Eof(Location),
 }
 
+impl Token {
+    pub fn loc(&self) -> Location {
+        match self {
+            Token::Punctuation(tokl) => tokl.loc,
+            Token::Operator(tokl) => tokl.loc,
+            Token::Keyword(tokl) => tokl.loc,
+            Token::Literal(tokl) => tokl.loc,
+            Token::Eof(loc) => *loc,
+        }
+    }
+
+    pub fn static_str(&self) -> &'static str {
+        match self {
+            Token::Punctuation(TokLoc { ref tok, .. }) => tok.into(),
+            Token::Operator(TokLoc { ref tok, .. }) => tok.into(),
+            Token::Keyword(TokLoc { ref tok, .. }) => tok.into(),
+            Token::Literal(TokLoc { ref tok, .. }) => match tok {
+                token::Literal::String(_) => "<string>",
+                token::Literal::Identifier(_) => "<identifier>",
+                token::Literal::Number(_) => "<number>",
+            },
+            Token::Eof(_) => "<eof>",
+        }
+    }
+}
+
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

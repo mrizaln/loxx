@@ -3,17 +3,6 @@ use std::fmt::{Debug, Display};
 use super::token;
 use crate::util::TokLoc;
 
-///! Lox Grammar (unfinished)
-///  ------------------------
-/// expression -> literal | unary | binary | grouping ;
-/// literal    -> NUMBER | STRING | "true" | "false" | "nil" ;
-/// grouping   -> "(" expression ")"
-/// unary      -> ( "-" | "!" ) expression ;
-/// binary     -> expression operator expression ;
-/// operator   -> "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/" ;
-
-// TODO: create another enum for token but in terms of Expr not lexeme
-
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
     Literal {

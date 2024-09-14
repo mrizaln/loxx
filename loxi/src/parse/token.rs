@@ -24,14 +24,14 @@ impl Into<String> for &Literal {
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum UnaryOp {
     Minus,
-    Bang,
+    Not,
 }
 
 impl Into<&str> for &UnaryOp {
     fn into(self) -> &'static str {
         match self {
             UnaryOp::Minus => "-",
-            UnaryOp::Bang => "!",
+            UnaryOp::Not => "!",
         }
     }
 }
@@ -44,8 +44,8 @@ pub enum BinaryOp {
     LessEq,
     Greater,
     GreaterEq,
-    Plus,
-    Minus,
+    Add,
+    Sub,
     Mul,
     Div,
 }
@@ -59,8 +59,8 @@ impl Into<&str> for &BinaryOp {
             BinaryOp::LessEq => "<=",
             BinaryOp::Greater => ">",
             BinaryOp::GreaterEq => ">=",
-            BinaryOp::Plus => "+",
-            BinaryOp::Minus => "-",
+            BinaryOp::Add => "+",
+            BinaryOp::Sub => "-",
             BinaryOp::Mul => "*",
             BinaryOp::Div => "/",
         }

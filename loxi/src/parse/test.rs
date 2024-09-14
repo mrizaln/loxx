@@ -26,7 +26,7 @@ fn print_expr_tree() {
     };
 
     let eqeq = token::BinaryOp::Equal;
-    let min = token::BinaryOp::Minus;
+    let min = token::BinaryOp::Sub;
     let star = token::BinaryOp::Mul;
     let lt = token::BinaryOp::Less;
 

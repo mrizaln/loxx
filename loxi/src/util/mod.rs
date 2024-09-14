@@ -9,7 +9,7 @@ pub struct TokLoc<T: Token> {
 }
 
 // TODO: add other information like filename and column
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Location {
     pub line: usize,
     pub column: usize,
