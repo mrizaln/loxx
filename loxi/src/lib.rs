@@ -6,6 +6,7 @@ use thiserror::Error;
 use self::lex::{Lexer, ScanResult};
 
 mod lex;
+mod parse;
 mod util;
 
 #[derive(Debug, Error)]
@@ -27,14 +28,14 @@ pub fn run(program: &str) -> Result<(), LoxError> {
         errors,
     } = Lexer::new(program).scan();
 
-    println!("\nerrors: {}", errors.len());
-    errors.iter().for_each(|err| println!("{err}"));
+    println!("\nlines: {}", lines.len());
+    lines.iter().for_each(|line| println!("{line:?}"));
 
     println!("\ntokens: {}", tokens.len());
     tokens.iter().for_each(|tok| println!("{tok}"));
 
-    println!("\nlines: {}", lines.len());
-    lines.iter().for_each(|line| println!("{line:?}"));
+    println!("\nerrors: {}", errors.len());
+    errors.iter().for_each(|err| println!("{err}"));
 
     Ok(())
 }

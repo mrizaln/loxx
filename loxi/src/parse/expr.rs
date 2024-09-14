@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use crate::lex::token::{tokens, Token, TokenValue};
+use super::token;
 
 ///! Lox Grammar (unfinished)
 ///  ------------------------
@@ -11,18 +11,20 @@ use crate::lex::token::{tokens, Token, TokenValue};
 /// binary     -> expression operator expression ;
 /// operator   -> "==" | "!=" | "<" | "<=" | ">" | ">=" | "+" | "-" | "*" | "/" ;
 
+// TODO: create another enum for token but in terms of Expr not lexeme
+
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
     Literal {
-        value: Token,
+        value: token::Literal,
     },
     Unary {
-        operator: Token,
+        operator: token::UnaryOp,
         right: Box<Expr>,
     },
     Binary {
         left: Box<Expr>,
-        operator: Token,
+        operator: token::BinaryOp,
         right: Box<Expr>,
     },
     Grouping {
@@ -33,39 +35,19 @@ pub enum Expr {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string: String = match &self {
-            Expr::Literal { value } => match &value.value {
-                TokenValue::Literal(value) => value.into(),
-                TokenValue::Keyword(value) => match &value {
-                    tokens::Keyword::True => Into::<&str>::into(value).to_string(),
-                    tokens::Keyword::False => Into::<&str>::into(value).to_string(),
-                    tokens::Keyword::Nil => Into::<&str>::into(value).to_string(),
-                    _ => panic!("Literal::Expr only considers true, false, and nil as literals!"),
-                },
-                _ => panic!("Literal::Expr can only contains Literal token!"),
-            },
-
-            Expr::Unary { operator, right } => match &operator.value {
-                TokenValue::Operator(operator) => {
-                    let op: &str = operator.into();
-                    format!("({op} {right})")
-                }
-                _ => panic!(
-                    "Expr::Unary only accept ! or - operator (got {} instead)",
-                    operator
-                ),
-            },
-
+            Expr::Literal { value } => value.into(),
+            Expr::Unary { operator, right } => {
+                let op: &str = operator.into();
+                format!("({op} {right})")
+            }
             Expr::Binary {
                 left,
                 operator,
                 right,
-            } => match &operator.value {
-                TokenValue::Operator(operator) => {
-                    let op: &str = operator.into();
-                    format!("({op} {left} {right})")
-                }
-                _ => panic!("Expr::Binary can't accept ! or - opeartor"),
-            },
+            } => {
+                let op: &str = operator.into();
+                format!("({op} {left} {right})")
+            }
 
             Expr::Grouping { expr } => {
                 format!("('group' {expr})")

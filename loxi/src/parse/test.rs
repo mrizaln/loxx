@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::lex::token::{macros::tok, tokens, Location, Token, TokenValue};
+use super::{expr::*, token};
 
 #[test]
 fn print_expr_tree() {
@@ -9,28 +9,26 @@ fn print_expr_tree() {
     // it should produce
     //      (== (< (* 1 ('group' (- 2 3))) 4) false)
 
-    use super::expr::*;
-
     let lit1 = Expr::Literal {
-        value: tok! { [0,0] -> Literal::Number = 1.0 },
+        value: token::Literal::Number(1.0),
     };
     let lit2 = Expr::Literal {
-        value: tok! { [0,0] -> Literal::Number = 2.0 },
+        value: token::Literal::Number(2.0),
     };
     let lit3 = Expr::Literal {
-        value: tok! { [0,0] -> Literal::Number = 3.0 },
+        value: token::Literal::Number(3.0),
     };
     let lit4 = Expr::Literal {
-        value: tok! { [0,0] -> Literal::Number = 4.0 },
+        value: token::Literal::Number(4.0),
     };
     let litf = Expr::Literal {
-        value: tok! { [0,0] -> Keyword::False },
+        value: token::Literal::False,
     };
 
-    let eqeq = tok! { [0,0] -> Operator::EqualEqual };
-    let min = tok! { [0,0] -> Operator::Minus };
-    let star = tok! { [0, 0] -> Operator::Star };
-    let lt = tok! { [0,0] -> Operator::Less };
+    let eqeq = token::BinaryOp::Equal;
+    let min = token::BinaryOp::Minus;
+    let star = token::BinaryOp::Mul;
+    let lt = token::BinaryOp::Less;
 
     let bin_min = Expr::Binary {
         left: Box::new(lit2),
