@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use self::lex::{Lexer, ScanResult};
+use self::parse::Parser;
 
 mod lex;
 mod parse;
@@ -28,14 +29,27 @@ pub fn run(program: &str) -> Result<(), LoxError> {
         errors,
     } = Lexer::new(program).scan();
 
-    println!("\nlines: {}", lines.len());
-    lines.iter().for_each(|line| println!("{line:?}"));
+    // TODO: pretty print the errors :)
+    if !errors.is_empty() {
+        errors.iter().for_each(|e| println!("{e}"));
+        println!("{} errors happened, aborting...", errors.len());
+        return Ok(());
+    }
 
-    println!("\ntokens: {}", tokens.len());
-    tokens.iter().for_each(|tok| println!("{tok}"));
-
-    println!("\nerrors: {}", errors.len());
-    errors.iter().for_each(|err| println!("{err}"));
+    let mut parser = Parser::new(&tokens);
+    match parser.parse() {
+        Ok(expr) => println!("Expr: {}", expr),
+        Err(err) => match err {
+            #[rustfmt::skip]
+            parse::ParseError::SyntaxError { loc, .. } => {
+                let line = lines[loc.line - 1];
+                println!("{:>4} | {}", loc.line, line);
+                println!("{:>4}   {:->width$}\x1b[1;91m^", "", "", width = loc.column - 1);
+                println!("{err}\x1b[00m");
+            }
+            _ => (),
+        },
+    }
 
     Ok(())
 }

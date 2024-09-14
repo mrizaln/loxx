@@ -2,6 +2,8 @@ use std::iter::Peekable;
 use std::ops::Deref;
 use std::slice::Iter;
 
+use thiserror::Error;
+
 use crate::lex;
 use crate::util::{Location, TokLoc};
 
@@ -22,19 +24,23 @@ pub mod token;
 /// primary    -> NUMBER | STRING | "true" | "false" | "nil" | grouping ;
 /// grouping   -> "(" expression ")"
 
+#[derive(Debug, Error)]
 pub enum ParseError {
+    #[error("{loc} SyntaxError: expect '{expect}', got '{real}'")]
     SyntaxError {
         expect: &'static str,
         real: &'static str,
         loc: Location,
     },
+
+    #[error("ParseError: unexpected End Of File <eof>")]
     EndOfFile,
 }
 
 pub struct Parser<'a> {
     tokens: Peekable<Iter<'a, lex::Token>>,
-    errors: Vec<ParseError>,
-    panic_mode: bool,
+    // errors: Vec<ParseError>,
+    // panic_mode: bool,
 }
 
 pub type ParseResult = Result<Box<Expr>, ParseError>;
@@ -43,8 +49,8 @@ impl<'a> Parser<'a> {
     pub fn new(tokens: &'a Vec<lex::Token>) -> Self {
         Self {
             tokens: tokens.iter().peekable(),
-            errors: Vec::new(),
-            panic_mode: false,
+            // errors: Vec::new(),
+            // panic_mode: false,
         }
     }
 
@@ -114,9 +120,9 @@ impl<'a> Parser<'a> {
 
         let lit = match curr {
             lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
-                lex::token::Keyword::True => todo!(),
-                lex::token::Keyword::False => todo!(),
-                lex::token::Keyword::Nil => todo!(),
+                lex::token::Keyword::True => Lit::Yes(token::Literal::True),
+                lex::token::Keyword::False => Lit::Yes(token::Literal::False),
+                lex::token::Keyword::Nil => Lit::Yes(token::Literal::Nil),
                 _ => Lit::No(tok.into()),
             },
             lex::Token::Literal(TokLoc { tok, .. }) => match tok {
@@ -132,6 +138,7 @@ impl<'a> Parser<'a> {
                             tok: lex::token::Punctuation::ParenRight,
                             loc: _,
                         })) => {
+                            self.advance();
                             return Ok(Box::new(Expr::Grouping { expr }));
                         }
                         _ => Lit::No((&lex::token::Punctuation::ParenRight).into()),
@@ -160,17 +167,6 @@ impl<'a> Parser<'a> {
 
     fn advance(&mut self) -> Option<&lex::Token> {
         self.tokens.next()
-    }
-
-    fn advance_while<F>(&mut self, pred: F) -> usize
-    where
-        F: Fn(&lex::Token) -> bool,
-    {
-        let mut count = 0;
-        while let Some(true) = self.peek().map(&pred) {
-            count += 1;
-        }
-        count
     }
 }
 

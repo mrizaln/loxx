@@ -17,7 +17,7 @@ pub struct Location {
 
 impl Display for Location {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[at {}:{}]", self.line, self.column)
+        write!(f, "[{}:{}]", self.line, self.column)
     }
 }
 
@@ -36,4 +36,12 @@ pub fn to_str<'a, const M: usize, const N: usize>(
     }
 
     std::str::from_utf8(&buf[..pos]).expect("All chars is valid")
+}
+
+/// for debugging purposes
+/// https://stackoverflow.com/a/78843608/16506263
+#[cfg(target_arch = "x86_64")]
+#[allow(unused)]
+pub unsafe fn sigtrap() {
+    std::arch::asm!("int3")
 }
