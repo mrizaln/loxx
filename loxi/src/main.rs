@@ -5,9 +5,11 @@ use clap::Parser;
 use loxi::{run_file, run_prompt, LoxError};
 
 #[derive(Parser, Debug)]
-#[clap(name = "loxi", about = "A Lox interpreter written")]
+#[clap(
+    name = "loxi",
+    about = "A Lox interpreter (tree-walk interpreter) written in Rust"
+)]
 struct Args {
-    #[arg(required = false)]
     pub source: Option<String>,
 }
 
