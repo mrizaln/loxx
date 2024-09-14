@@ -49,6 +49,28 @@ impl Display for Expr {
 
 impl Debug for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(self, f)
+        let string: String = match &self {
+            Expr::Literal { value } => {
+                let str: String = (&value.tok).into();
+                format!("{}{}", str, value.loc)
+            }
+            Expr::Unary { operator, right } => {
+                let op: &str = (&operator.tok).into();
+                format!("({op}{} {right:?})", operator.loc)
+            }
+            Expr::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                let op: &str = (&operator.tok).into();
+                format!("({op}{} {left:?} {right:?})", operator.loc)
+            }
+
+            Expr::Grouping { expr } => {
+                format!("('group' {expr:?})")
+            }
+        };
+        write!(f, "{}", string)
     }
 }
