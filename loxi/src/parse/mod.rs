@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::lex;
 use crate::util::{Location, TokLoc};
 
-use self::expr::Expr;
+use expr::Expr;
 
 pub mod expr;
 mod test;
@@ -54,8 +54,29 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> ParseResult {
+    pub fn parse(mut self) -> ParseResult {
         self.expression()
+    }
+
+    fn synchronize(&mut self) {
+        while let Some(tok) = self.peek() {
+            match tok {
+                lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
+                    lex::token::Keyword::Class => break,
+                    lex::token::Keyword::If => break,
+                    lex::token::Keyword::Else => unimplemented!(),
+                    lex::token::Keyword::For => break,
+                    lex::token::Keyword::While => break,
+                    lex::token::Keyword::Fun => break,
+                    lex::token::Keyword::Print => break,
+                    lex::token::Keyword::Return => break,
+                    lex::token::Keyword::Var => break,
+                    _ => (),
+                },
+                _ => (),
+            }
+            self.advance();
+        }
     }
 
     fn expression(&mut self) -> ParseResult {
