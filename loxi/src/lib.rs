@@ -46,7 +46,10 @@ pub fn run(program: &str) -> Result<(), LoxError> {
             match err {
                 #[rustfmt::skip]
                 parse::ParseError::SyntaxError { loc, .. } => {
-                    let line = lines[loc.line - 1];
+                    let line = match loc.line > lines.len() {
+                        true => "",
+                        false => lines[loc.line - 1]
+                    };
                     println!("{:>4} | {}", loc.line, line);
                     println!("{:>4}   {:->width$}\x1b[1;91m^", "", "", width = loc.column - 1);
                     println!("{err}\x1b[00m");
