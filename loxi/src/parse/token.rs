@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::util::Token;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -21,6 +23,13 @@ impl Into<String> for &Literal {
     }
 }
 
+impl Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: String = self.into();
+        write!(f, "{str}")
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum UnaryOp {
     Minus,
@@ -33,6 +42,13 @@ impl Into<&str> for &UnaryOp {
             UnaryOp::Minus => "-",
             UnaryOp::Not => "!",
         }
+    }
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: &str = self.into();
+        write!(f, "{str}")
     }
 }
 
@@ -64,6 +80,13 @@ impl Into<&str> for &BinaryOp {
             BinaryOp::Mul => "*",
             BinaryOp::Div => "/",
         }
+    }
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: &str = self.into();
+        write!(f, "{str}")
     }
 }
 

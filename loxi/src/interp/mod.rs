@@ -1,26 +1,40 @@
-use crate::parse::expr::Expr;
+use thiserror::Error;
 
-use self::object::{Value, ValueError};
+use crate::parse::{expr::Expr, token};
+use crate::util::Location;
+
+use self::object::Value;
 
 pub mod object;
 
+#[derive(Debug, Error)]
+pub enum RuntimeError {
+    #[error("{0} RuntimeError: invalid binary operation ({1}) between {2} and {3}")]
+    InvalidBinaryOp(Location, token::BinaryOp, &'static str, &'static str),
+    #[error("{0} RuntimeError: invalid unary operation ({1}) on {2}")]
+    InvalidUnaryOp(Location, token::UnaryOp, &'static str),
+}
+
 impl Expr {
-    pub fn eval(self) -> Result<Value, ValueError> {
+    pub fn eval(self) -> Result<Value, RuntimeError> {
         match self {
             Expr::Literal { value } => match value.tok {
-                crate::parse::token::Literal::Number(num) => Ok(Value::Number(num)),
-                crate::parse::token::Literal::String(str) => Ok(Value::String(str)),
-                crate::parse::token::Literal::True => Ok(Value::Bool(true)),
-                crate::parse::token::Literal::False => Ok(Value::Bool(false)),
-                crate::parse::token::Literal::Nil => Ok(Value::Nil),
+                token::Literal::Number(num) => Ok(Value::Number(num)),
+                token::Literal::String(str) => Ok(Value::String(str)),
+                token::Literal::True => Ok(Value::Bool(true)),
+                token::Literal::False => Ok(Value::Bool(false)),
+                token::Literal::Nil => Ok(Value::Nil),
             },
             Expr::Grouping { expr } => expr.eval(),
             Expr::Unary { operator, right } => {
                 let eval = right.eval()?;
                 match operator.tok {
-                    crate::parse::token::UnaryOp::Minus => eval.minus(),
-                    crate::parse::token::UnaryOp::Not => eval.not(),
+                    token::UnaryOp::Minus => eval.minus(),
+                    token::UnaryOp::Not => eval.not(),
                 }
+                .ok_or_else(|| {
+                    RuntimeError::InvalidUnaryOp(operator.loc, operator.tok, eval.name())
+                })
             }
             Expr::Binary {
                 left,
@@ -31,17 +45,25 @@ impl Expr {
                 let right = right.eval()?;
 
                 match operator.tok {
-                    crate::parse::token::BinaryOp::Add => left.add(&right),
-                    crate::parse::token::BinaryOp::Sub => left.sub(&right),
-                    crate::parse::token::BinaryOp::Mul => left.mul(&right),
-                    crate::parse::token::BinaryOp::Div => left.div(&right),
-                    crate::parse::token::BinaryOp::Equal => left.eq(&right),
-                    crate::parse::token::BinaryOp::NotEqual => left.neq(&right),
-                    crate::parse::token::BinaryOp::Less => left.lt(&right),
-                    crate::parse::token::BinaryOp::LessEq => left.le(&right),
-                    crate::parse::token::BinaryOp::Greater => left.gt(&right),
-                    crate::parse::token::BinaryOp::GreaterEq => left.ge(&right),
+                    token::BinaryOp::Add => left.add(&right),
+                    token::BinaryOp::Sub => left.sub(&right),
+                    token::BinaryOp::Mul => left.mul(&right),
+                    token::BinaryOp::Div => left.div(&right),
+                    token::BinaryOp::Equal => left.eq(&right),
+                    token::BinaryOp::NotEqual => left.neq(&right),
+                    token::BinaryOp::Less => left.lt(&right),
+                    token::BinaryOp::LessEq => left.le(&right),
+                    token::BinaryOp::Greater => left.gt(&right),
+                    token::BinaryOp::GreaterEq => left.ge(&right),
                 }
+                .ok_or_else(|| {
+                    RuntimeError::InvalidBinaryOp(
+                        operator.loc,
+                        operator.tok,
+                        left.name(),
+                        right.name(),
+                    )
+                })
             }
         }
     }

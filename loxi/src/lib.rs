@@ -3,14 +3,21 @@ use std::io::{self, stdin, stdout, Read, Write};
 use std::path::PathBuf;
 use thiserror::Error;
 
-use self::interp::object::{Value, ValueError};
 use self::lex::{Lexer, ScanResult};
 use self::parse::Parser;
+use self::util::Location;
 
 mod interp;
 mod lex;
 mod parse;
 mod util;
+
+macro_rules! println_red {
+    ($fmt:literal, $($arg:tt)*) => {
+        let str = format!($fmt, $($arg)*);
+        println!("\x1b[1;31m{}\x1b[00m", str)
+    };
+}
 
 #[derive(Debug, Error)]
 pub enum LoxError {
@@ -33,8 +40,16 @@ pub fn run(program: &str) -> Result<(), LoxError> {
 
     // TODO: pretty print the errors :)
     if !errors.is_empty() {
-        errors.iter().for_each(|e| println!("{e}"));
-        println!("{} errors happened, aborting...", errors.len());
+        errors.iter().for_each(|err| {
+            let loc = match err {
+                lex::LexError::UnknownToken(loc, _, _) => loc,
+                lex::LexError::UnterminatedString(loc) => loc,
+                lex::LexError::UnableToParseNumber(loc, _) => loc,
+            };
+            print_context(&lines, *loc);
+            println_red!("{}", err);
+        });
+        println_red!("\n{} Lexing errors occurred, aborting...", errors.len());
         return Ok(());
     }
 
@@ -46,16 +61,12 @@ pub fn run(program: &str) -> Result<(), LoxError> {
             match err {
                 #[rustfmt::skip]
                 parse::ParseError::SyntaxError { loc, .. } => {
-                    let line = match loc.line > lines.len() {
-                        true => "",
-                        false => lines[loc.line - 1]
-                    };
-                    println!("{:>4} | {}", loc.line, line);
-                    println!("{:>4}   {:->width$}\x1b[1;91m^", "", "", width = loc.column - 1);
-                    println!("{err}\x1b[00m");
+                    print_context(&lines, loc);
+                    println_red!("{}", err);
                 }
                 parse::ParseError::EndOfFile => {
-                    println!("Unexpected EndOfFile at line {}", lines.len())
+                    // NOTE: this branch should never be selected
+                    println_red!("Unexpected EndOfFile at line {}", lines.len());
                 }
             };
             return Ok(());
@@ -66,7 +77,14 @@ pub fn run(program: &str) -> Result<(), LoxError> {
     let result = expr.unwrap().eval();
     match result {
         Ok(val) => println!("Eval: {val}"),
-        Err(err) => eprintln!("Eval err: {err:?}"),
+        Err(err) => {
+            let loc = match err {
+                interp::RuntimeError::InvalidBinaryOp(loc, _, _, _) => loc,
+                interp::RuntimeError::InvalidUnaryOp(loc, _, _) => loc,
+            };
+            print_context(&lines, loc);
+            println_red!("{}", err);
+        }
     }
 
     Ok(())
@@ -117,4 +135,16 @@ pub fn run_prompt() -> Result<(), LoxError> {
 
     println!("\nExiting loxi...");
     Ok(())
+}
+
+#[rustfmt::skip]
+fn print_context(lines: &Vec<&str>, loc: Location) {
+    let line = match loc.line > lines.len() {
+        true => "",
+        false => lines[loc.line - 1],
+    };
+    println!("{:->width$}", "", width = 80);
+    println!("{:>4} |", "");
+    println!("{:>4} | {}", loc.line, line);
+    println!("{:>4} | \x1b[1m{:>width$}\x1b[1;31m^\x1b[00m", "", "", width = loc.column - 1);
 }
