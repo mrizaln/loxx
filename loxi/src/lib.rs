@@ -21,24 +21,30 @@ macro_rules! println_red {
 
 #[derive(Debug, Error)]
 pub enum LoxError {
-    #[error("Could not read: {0}")]
+    #[error("--[ LoxError ]-- Could not read file: {0}")]
     IoError(#[from] io::Error),
 
-    #[error("Lexing error: {0}")]
-    LexError(#[from] lex::LexError),
+    #[error("--[ LoxError ]-- {0} Lexing errors occurred, aborting...")]
+    LexError(usize),
 
-    #[error("Empty file: {0}")]
-    EmptyError(PathBuf),
+    #[error("--[ LoxError ]-- Parsing error occured, aborting...")]
+    ParseError,
+
+    #[error("--[ LoxError ]-- Runtime error occured, aborting...")]
+    RuntimeError,
+
+    #[error("--[ LoxError ]-- Empty file")]
+    EmptyError,
 }
 
 pub fn run(program: &str) -> Result<(), LoxError> {
+    let lexer = Lexer::new(program);
     let ScanResult {
         lines,
         tokens,
         errors,
-    } = Lexer::new(program).scan();
+    } = lexer.scan();
 
-    // TODO: pretty print the errors :)
     if !errors.is_empty() {
         errors.iter().for_each(|err| {
             let loc = match err {
@@ -49,14 +55,15 @@ pub fn run(program: &str) -> Result<(), LoxError> {
             print_context(&lines, *loc);
             println_red!("{}", err);
         });
-        println_red!("\n{} Lexing errors occurred, aborting...", errors.len());
-        return Ok(());
+        return Err(LoxError::LexError(errors.len()));
+    }
+
+    if tokens.len() == 1 {
+        return Err(LoxError::EmptyError);
     }
 
     let parser = Parser::new(&tokens);
-    let expr = parser.parse();
-
-    match expr {
+    let expr = match parser.parse() {
         Err(err) => {
             match err {
                 #[rustfmt::skip]
@@ -69,13 +76,15 @@ pub fn run(program: &str) -> Result<(), LoxError> {
                     println_red!("Unexpected EndOfFile at line {}", lines.len());
                 }
             };
-            return Ok(());
+            return Err(LoxError::ParseError);
         }
-        Ok(ref val) => println!("Expr: {val}"),
+        Ok(val) => {
+            println!("Expr: {val}");
+            val
+        }
     };
 
-    let result = expr.unwrap().eval();
-    match result {
+    match expr.eval() {
         Ok(val) => println!("Eval: {val}"),
         Err(err) => {
             let loc = match err {
@@ -84,6 +93,7 @@ pub fn run(program: &str) -> Result<(), LoxError> {
             };
             print_context(&lines, loc);
             println_red!("{}", err);
+            return Err(LoxError::RuntimeError);
         }
     }
 
@@ -97,7 +107,7 @@ pub fn run_file(path: PathBuf) -> Result<(), LoxError> {
         file.read_to_string(&mut string)?;
 
         match string.is_empty() {
-            true => return Err(LoxError::EmptyError(path)),
+            true => return Err(LoxError::EmptyError),
             false => {
                 // make sure the content of the file ends with newline
                 if string.chars().last().unwrap() != '\n' {
@@ -113,7 +123,7 @@ pub fn run_file(path: PathBuf) -> Result<(), LoxError> {
     Ok(())
 }
 
-pub fn run_prompt() -> Result<(), LoxError> {
+pub fn run_prompt() -> io::Result<()> {
     println!("Loxi: a Lox programming language interpreter (currently under construction)");
 
     let mut line = String::new();

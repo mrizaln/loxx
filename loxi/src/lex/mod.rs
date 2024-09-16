@@ -359,6 +359,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
+// FIXME: column don't consider unicode character width might be different from unicode byte count
 #[derive(Debug, Clone)]
 struct LineLocation {
     pub index: usize,
@@ -390,7 +391,6 @@ impl LineLocation {
     }
 }
 
-// NOTE: only works for ascii
 fn is_ascii_identifier(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }

@@ -38,7 +38,7 @@ impl Value {
     pub fn add(&self, other: &Self) -> Option<Value> {
         match (self, other) {
             (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(*num1 + *num2)),
-            (Value::String(str1), Value::String(str2)) => Some(Value::String(str1.clone() + str2)),
+            (Value::String(str1), Value::String(str2)) => Some(Value::String(str1.clone() + str2)), // Rc
             _ => None,
         }
     }

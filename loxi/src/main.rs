@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::process::exit;
+use std::process::ExitCode;
 
 use clap::Parser;
 use loxi::{run_file, run_prompt, LoxError};
@@ -13,7 +13,7 @@ struct Args {
     pub source: Option<String>,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args = Args::parse();
 
     match args.source {
@@ -22,26 +22,30 @@ fn main() {
 
             if !path.exists() {
                 eprintln!("File not found: {:?}", path);
-                exit(1);
+                return ExitCode::FAILURE;
             } else if !path.is_file() {
                 eprintln!("Not a file: {:?}", path);
-                exit(1);
+                return ExitCode::FAILURE;
             }
 
-            match run_file(path) {
-                Ok(_) => (),
-                Err(LoxError::EmptyError(_)) => (),
-                Err(err) => {
-                    eprintln!("{}", err);
-                    exit(1);
-                }
+            if let Err(err) = run_file(path) {
+                eprintln!("{err}");
+                return match err {
+                    LoxError::IoError(_) => ExitCode::FAILURE,
+                    LoxError::LexError(_) => ExitCode::from(65),
+                    LoxError::ParseError => ExitCode::from(65),
+                    LoxError::RuntimeError => ExitCode::from(70),
+                    LoxError::EmptyError => ExitCode::SUCCESS,
+                };
             }
+            ExitCode::SUCCESS
         }
         None => {
             if let Err(err) = run_prompt() {
                 eprintln!("{}", err);
-                exit(1);
+                return ExitCode::FAILURE;
             }
+            ExitCode::SUCCESS
         }
     }
 }
