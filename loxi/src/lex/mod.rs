@@ -125,12 +125,12 @@ impl<'a> Lexer<'a> {
         match single.is_ascii() {
             true => match single {
                 '\n'                        => self.newline_handler(current),
-                '/'                         => self.slash_handler(current),
+                '/'                         => self.slash_handler(),
                 '"'                         => self.string_handler(current),
                 c if c.is_digit(10)         => self.number_handler(current),
                 c if c.is_whitespace()      => self.whitespace_handler(),
                 c if is_ascii_identifier(c) => self.ascii_identifier_handler(current, single),
-                _                           => self.other_handler(current, single),
+                _                           => self.other_handler(single),
             },
             false => match single {
                 c if c.is_whitespace()      => self.whitespace_handler(),
