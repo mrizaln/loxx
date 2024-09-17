@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::iter::Peekable;
 use std::str::CharIndices;
 use thiserror::Error;
+use unicode_width::UnicodeWidthChar;
 
 use crate::util::{self, Location, TokLoc};
 use macros::tok;
@@ -93,7 +94,12 @@ impl<'a> Lexer<'a> {
             lines: Vec::new(),
             tokens: Vec::new(),
             errors: Vec::new(),
-            line: LineLocation { index: 1, start: 0 },
+            line: LineLocation {
+                index: 1,
+                start: 0,
+                column: 0,
+                char: '\0',
+            },
         }
     }
 
@@ -104,7 +110,7 @@ impl<'a> Lexer<'a> {
             // simple debugging to see whether my code is stalling, or just slow :D
             // print!("\r{} chars out of {} scanned", i, self.source.len());
         }
-        self.add_token(Token::Eof(self.loc_rel(self.source.len())));
+        self.add_token(Token::Eof(self.line.to_loc()));
 
         ScanResult {
             lines: self.lines,
@@ -138,12 +144,12 @@ impl<'a> Lexer<'a> {
     fn scan_token(&mut self, current: usize, single: char) {
         match single {
             '\n'                        => self.newline_handler(current),
-            '/'                         => self.slash_handler(current),
+            '/'                         => self.slash_handler(),
             '"'                         => self.string_handler(current),
             c if c.is_digit(10)         => self.number_handler(current),
             c if c.is_whitespace()      => self.whitespace_handler(),
             c if is_ascii_identifier(c) => self.ascii_identifier_handler(current, single),
-            _                           => self.other_handler(current, single),
+            _                           => self.other_handler(single),
         }
     }
 
@@ -152,9 +158,10 @@ impl<'a> Lexer<'a> {
 
         self.line.index += 1;
         self.line.start = current + 1;
+        self.line.column = 0;
     }
 
-    fn slash_handler(&mut self, current: usize) {
+    fn slash_handler(&mut self) {
         // might be comment
         if self.if_next_is('/') {
             self.advance();
@@ -167,7 +174,7 @@ impl<'a> Lexer<'a> {
             return;
         }
 
-        self.add_token(tok! { [self.loc_rel(current)] -> Operator::Slash });
+        self.add_token(tok! { [self.line.to_loc()] -> Operator::Slash });
     }
 
     fn string_handler(&mut self, current: usize) {
@@ -187,12 +194,10 @@ impl<'a> Lexer<'a> {
             Some(idx) => {
                 let value = self.source[current + 1..idx].to_string();
                 self.add_token(tok! {
-                    [start_line.loc_rel(current).unwrap()] -> Literal::String = value
+                    [start_line.to_loc()] -> Literal::String = value
                 });
             }
-            None => self.add_error(LexError::UnterminatedString(
-                start_line.loc_rel(current).unwrap(),
-            )),
+            None => self.add_error(LexError::UnterminatedString(start_line.to_loc())),
         }
     }
 
@@ -213,11 +218,11 @@ impl<'a> Lexer<'a> {
 
         match self.source[current..index + 1].parse::<f64>() {
             Ok(value) => {
-                self.add_token(tok! { [self.loc_rel(current)] -> Literal::Number = value });
+                self.add_token(tok! { [self.line.to_loc()] -> Literal::Number = value });
             }
             Err(_) => {
                 self.add_error(LexError::UnableToParseNumber(
-                    self.loc_rel(current),
+                    self.line.to_loc(),
                     self.source[current..index + 1].to_string(),
                 ));
             }
@@ -226,7 +231,7 @@ impl<'a> Lexer<'a> {
         // NOTE: I add Dot token here since I can't peek the next next char. I must advance from
         // the dot on the if let block above so on the next iteration the dot is already consumed.
         if trailing_dot {
-            self.add_token(tok! { [self.loc_rel(index)] -> Punctuation::Dot });
+            self.add_token(tok! { [self.line.to_loc()] -> Punctuation::Dot });
         }
     }
 
@@ -249,8 +254,8 @@ impl<'a> Lexer<'a> {
         let value = self.source[current..end].to_string();
 
         let token = match token::Keyword::try_from(value.as_str()) {
-            Ok(keyword) => tok! { [self.loc_rel(current)] -> Keyword = keyword },
-            Err(_) => tok! { [self.loc_rel(current)] -> Literal::Identifier = value },
+            Ok(keyword) => tok! { [self.line.to_loc()] -> Keyword = keyword },
+            Err(_) => tok! { [self.line.to_loc()] -> Literal::Identifier = value },
         };
 
         self.add_token(token);
@@ -266,12 +271,12 @@ impl<'a> Lexer<'a> {
         });
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
-        self.add_token(tok! { [self.loc_rel(current)] -> Literal::Identifier = value });
+        self.add_token(tok! { [self.line.to_loc()] -> Literal::Identifier = value });
     }
 
-    fn other_handler(&mut self, current: usize, single: char) {
+    fn other_handler(&mut self, single: char) {
         if let Ok(token) = token::Punctuation::try_from(single) {
-            self.add_token(tok! { [self.loc_rel(current)] -> Punctuation = token });
+            self.add_token(tok! { [self.line.to_loc()] -> Punctuation = token });
             return;
         }
 
@@ -281,7 +286,7 @@ impl<'a> Lexer<'a> {
         if let Some((_, ch)) = self.peek() {
             let double_slice = util::to_str(&mut two_char_buf, &[single, *ch]);
             if let Ok(token) = token::Operator::try_from(double_slice) {
-                self.add_token(tok! { [self.loc_rel(current)] -> Operator = token });
+                self.add_token(tok! { [self.line.to_loc()] -> Operator = token });
                 let _ = self.advance();
                 return;
             }
@@ -290,12 +295,12 @@ impl<'a> Lexer<'a> {
         // for single chars operators
         let single_slice = util::to_str(&mut two_char_buf, &[single]);
         if let Ok(token) = token::Operator::try_from(single_slice) {
-            self.add_token(tok! { [self.loc_rel(current)] -> Operator = token });
+            self.add_token(tok! { [self.line.to_loc()] -> Operator = token });
             return;
         }
 
         self.add_error(LexError::UnknownToken(
-            self.loc_rel(current),
+            self.line.to_loc(),
             single,
             single as u32,
         ));
@@ -313,7 +318,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance(&mut self) -> Option<(usize, char)> {
-        self.chars.next()
+        self.chars.next().and_then(|(i, ch)| {
+            self.line.column += ch.width().unwrap_or(0);
+            self.line.char = ch;
+            Some((i, ch))
+        })
     }
 
     /// peekable has issue of getting into the limitation of the borrow checker.
@@ -350,44 +359,22 @@ impl<'a> Lexer<'a> {
             _ => false,
         }
     }
-
-    fn loc_rel(&self, index: usize) -> Location {
-        match self.line.loc_rel(index) {
-            Ok(loc) => loc,
-            Err(err) => panic!("Fatal error: {err}"),
-        }
-    }
 }
 
-// FIXME: column don't consider unicode character width might be different from unicode byte count
 #[derive(Debug, Clone)]
 struct LineLocation {
     pub index: usize,
     pub start: usize,
-}
-
-#[derive(Debug, Error)]
-enum LineLocationError {
-    #[error("Index less than start: {index} < {start}")]
-    IndexLessThanStart { start: usize, index: usize },
+    pub column: usize, // the displayed column
+    pub char: char,
 }
 
 impl LineLocation {
-    pub fn col_rel(&self, index: usize) -> Result<usize, LineLocationError> {
-        match index {
-            i if i < self.start => Err(LineLocationError::IndexLessThanStart {
-                start: self.start,
-                index,
-            }),
-            _ => Ok(index - self.start + 1), // 1-indexed
-        }
-    }
-
-    pub fn loc_rel(&self, index: usize) -> Result<Location, LineLocationError> {
-        self.col_rel(index).map(|column| Location {
+    pub fn to_loc(&self) -> Location {
+        Location {
             line: self.index,
-            column,
-        })
+            column: self.column - self.char.width().unwrap_or(0) + 1,
+        }
     }
 }
 
