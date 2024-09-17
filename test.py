@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# NOTE: This script is a python3 port of the test.dart script from 
+# NOTE: This script is a python3 port of the test.dart script from
 #       https://github.com/munificent/craftinginterpreters
 
 from argparse import ArgumentParser, RawTextHelpFormatter
@@ -204,8 +204,8 @@ def main() -> int:
     )
 
     args = parser.parse_args()
-    filter = None if args.filter is None else Path(args.filter)
-    chapter = args.chapter
+    filter = None if args.f is None else Path(args.f)
+    chapter = args.c
 
     # populate the test cases, this is required
     populate_tests()
