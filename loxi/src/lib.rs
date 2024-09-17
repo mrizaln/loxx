@@ -65,41 +65,34 @@ pub fn run(program: &str) -> Result<(), LoxError> {
     }
 
     let parser = Parser::new(&tokens);
-    let program = match parser.parse() {
-        Err(err) => {
-            match err {
-                #[rustfmt::skip]
-                parse::ParseError::SyntaxError { loc, .. } => {
-                    print_context(&lines, loc);
-                    println_red!("{}", err);
-                }
-                parse::ParseError::EndOfFile(loc) => {
-                    print_context(&lines, loc);
-                    println_red!("{}", err);
-                }
-                parse::ParseError::EmptyExpr(loc) => {
-                    print_context(&lines, loc);
-                    println_red!("{}", err);
-                }
-            };
-            return Err(LoxError::ParseError);
+    let program = parser.parse().map_err(|err| {
+        match err {
+            parse::ParseError::SyntaxError { loc, .. } => {
+                print_context(&lines, loc);
+                println_red!("{}", err);
+            }
+            parse::ParseError::EndOfFile(loc) => {
+                print_context(&lines, loc);
+                println_red!("{}", err);
+            }
+            parse::ParseError::EmptyExpr(loc) => {
+                print_context(&lines, loc);
+                println_red!("{}", err);
+            }
         }
-        Ok(val) => val,
-    };
+        LoxError::ParseError
+    })?;
 
     let mut interpreter = Interpreter::new();
-    match interpreter.interpret(program) {
-        Err(err) => {
-            let loc = match err {
-                interp::RuntimeError::InvalidBinaryOp(loc, _, _, _) => loc,
-                interp::RuntimeError::InvalidUnaryOp(loc, _, _) => loc,
-            };
-            print_context(&lines, loc);
-            println_red!("{}", err);
-            return Err(LoxError::RuntimeError);
-        }
-        Ok(_) => (),
-    }
+    let _ = interpreter.interpret(program).map_err(|err| {
+        let loc = match err {
+            interp::RuntimeError::InvalidBinaryOp(loc, _, _, _) => loc,
+            interp::RuntimeError::InvalidUnaryOp(loc, _, _) => loc,
+        };
+        print_context(&lines, loc);
+        println_red!("{}", err);
+        LoxError::RuntimeError
+    })?;
 
     Ok(())
 }

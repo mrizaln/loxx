@@ -64,6 +64,7 @@ impl Value {
         }
     }
 
+    // TODO: re-check the Lox language rule
     pub fn eq(&self, other: &Self) -> Option<Value> {
         match (self, other) {
             (Value::Nil, Value::Nil) => Some(Value::Bool(true)),
@@ -71,7 +72,7 @@ impl Value {
             (Value::Number(num1), Value::Number(num2)) => Some(Value::Bool(num1 == num2)),
             (Value::String(str1), Value::String(str2)) => Some(Value::Bool(str1 == str2)),
             (Value::Object(_), Value::Object(_)) => unimplemented!(),
-            _ => None,
+            _ => Some(Value::Bool(false)),
         }
     }
 

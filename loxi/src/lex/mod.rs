@@ -178,7 +178,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn string_handler(&mut self, current: usize) {
-        let start_line = self.line.clone();
+        let start = self.line.to_loc();
 
         let mut index = None;
         while let Some((i, ch)) = self.advance() {
@@ -194,14 +194,15 @@ impl<'a> Lexer<'a> {
             Some(idx) => {
                 let value = self.source[current + 1..idx].to_string();
                 self.add_token(tok! {
-                    [start_line.to_loc()] -> Literal::String = value
+                    [start] -> Literal::String = value
                 });
             }
-            None => self.add_error(LexError::UnterminatedString(start_line.to_loc())),
+            None => self.add_error(LexError::UnterminatedString(start)),
         }
     }
 
     fn number_handler(&mut self, current: usize) {
+        let start = self.line.to_loc();
         let count = self.advance_while(|(_, ch)| ch.is_digit(10));
         let mut index = current + count;
         let mut trailing_dot = false;
@@ -218,7 +219,7 @@ impl<'a> Lexer<'a> {
 
         match self.source[current..index + 1].parse::<f64>() {
             Ok(value) => {
-                self.add_token(tok! { [self.line.to_loc()] -> Literal::Number = value });
+                self.add_token(tok! { [start] -> Literal::Number = value });
             }
             Err(_) => {
                 self.add_error(LexError::UnableToParseNumber(
@@ -240,6 +241,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn ascii_identifier_handler(&mut self, current: usize, single: char) {
+        let start = self.line.to_loc();
         let count = self.advance_while(|(_, ch)| {
             if cfg!(feature = "unicode") {
                 match ch.is_ascii() {
@@ -254,8 +256,8 @@ impl<'a> Lexer<'a> {
         let value = self.source[current..end].to_string();
 
         let token = match token::Keyword::try_from(value.as_str()) {
-            Ok(keyword) => tok! { [self.line.to_loc()] -> Keyword = keyword },
-            Err(_) => tok! { [self.line.to_loc()] -> Literal::Identifier = value },
+            Ok(keyword) => tok! { [start] -> Keyword = keyword },
+            Err(_) => tok! { [start] -> Literal::Identifier = value },
         };
 
         self.add_token(token);
@@ -265,18 +267,21 @@ impl<'a> Lexer<'a> {
     // WARN: braille blank is not considered as whitespace!
     #[cfg(feature = "unicode")]
     fn unicode_identifier_handler(&mut self, current: usize, single: char) {
+        let start = self.line.to_loc();
         let count = self.advance_while(|(_, ch)| match ch.is_ascii() {
             true => is_ascii_identifier(*ch),
             false => !ch.is_whitespace(),
         });
         let end = current + count + single.len_utf8();
         let value = self.source[current..end].to_string();
-        self.add_token(tok! { [self.line.to_loc()] -> Literal::Identifier = value });
+        self.add_token(tok! { [start] -> Literal::Identifier = value });
     }
 
     fn other_handler(&mut self, single: char) {
+        let start = self.line.to_loc();
+
         if let Ok(token) = token::Punctuation::try_from(single) {
-            self.add_token(tok! { [self.line.to_loc()] -> Punctuation = token });
+            self.add_token(tok! { [start] -> Punctuation = token });
             return;
         }
 
@@ -286,7 +291,7 @@ impl<'a> Lexer<'a> {
         if let Some((_, ch)) = self.peek() {
             let double_slice = util::to_str(&mut two_char_buf, &[single, *ch]);
             if let Ok(token) = token::Operator::try_from(double_slice) {
-                self.add_token(tok! { [self.line.to_loc()] -> Operator = token });
+                self.add_token(tok! { [start] -> Operator = token });
                 let _ = self.advance();
                 return;
             }
@@ -295,7 +300,7 @@ impl<'a> Lexer<'a> {
         // for single chars operators
         let single_slice = util::to_str(&mut two_char_buf, &[single]);
         if let Ok(token) = token::Operator::try_from(single_slice) {
-            self.add_token(tok! { [self.line.to_loc()] -> Operator = token });
+            self.add_token(tok! { [start] -> Operator = token });
             return;
         }
 

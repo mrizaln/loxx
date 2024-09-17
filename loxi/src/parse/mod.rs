@@ -110,19 +110,9 @@ impl<'a> Parser<'a> {
                     ..
                 }) => {
                     let loc = self.advance().unwrap().loc();
-                    let expr = match self.expression_statement() {
-                        Ok(expr) => match expr {
-                            Stmt::Expr(expr) => expr,
-                            _ => panic!("Unexpected statement"),
-                        },
-                        Err(err) => match err {
-                            ParseError::EmptyExpr(loc) => Err(ParseError::SyntaxError {
-                                expect: "<expression>",
-                                real: "<empty>",
-                                loc,
-                            }),
-                            _ => Err(err),
-                        }?,
+                    let expr = match self.expression_statement()? {
+                        Stmt::Expr(expr) => expr,
+                        _ => panic!("Unexpected statement"),
                     };
                     return Ok(Stmt::Print { loc, expr });
                 }
@@ -133,7 +123,14 @@ impl<'a> Parser<'a> {
     }
 
     fn expression_statement(&mut self) -> StmtResult {
-        let expr = self.expression()?;
+        let expr = self.expression().map_err(|err| match err {
+            ParseError::EmptyExpr(loc) => ParseError::SyntaxError {
+                expect: "<expression>",
+                real: "<empty>",
+                loc,
+            },
+            _ => err,
+        })?;
         match self.peek() {
             Some(lex::Token::Punctuation(TokLoc {
                 tok: lex::token::Punctuation::Semicolon,
@@ -167,22 +164,19 @@ impl<'a> Parser<'a> {
             expr = Box::new(Expr::Binary {
                 left: expr,
                 operator: op,
-                right: match inner(self) {
-                    Ok(expr) => expr,
-                    Err(err) => match err {
-                        ParseError::EndOfFile(loc) => Err(ParseError::SyntaxError {
-                            expect: "<expression>",
-                            real: "<eof>",
-                            loc,
-                        })?,
-                        ParseError::EmptyExpr(loc) => Err(ParseError::SyntaxError {
-                            expect: "<expression>",
-                            real: "<empty>",
-                            loc,
-                        })?,
-                        _ => return Err(err),
+                right: inner(self).map_err(|err| match err {
+                    ParseError::EndOfFile(loc) => ParseError::SyntaxError {
+                        expect: "<expression>",
+                        real: "<eof>",
+                        loc,
                     },
-                },
+                    ParseError::EmptyExpr(loc) => ParseError::SyntaxError {
+                        expect: "<expression>",
+                        real: "<empty>",
+                        loc,
+                    },
+                    _ => err,
+                })?,
             });
         }
 
