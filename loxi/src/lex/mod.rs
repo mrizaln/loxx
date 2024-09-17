@@ -64,7 +64,7 @@ pub enum LexError {
     #[error("{0} Unterminated string")]
     UnterminatedString(Location),
 
-    #[error("{0} Unable to parse Number {1}")]
+    #[error("{0} Unable to parse Number '{1}'")]
     UnableToParseNumber(Location, String),
 }
 

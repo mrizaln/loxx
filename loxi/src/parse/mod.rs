@@ -26,14 +26,14 @@ pub mod token;
 
 #[derive(Debug, Error)]
 pub enum ParseError {
-    #[error("{loc} SyntaxError: expect '{expect}', got '{real}'")]
+    #[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
     SyntaxError {
         expect: &'static str,
         real: &'static str,
         loc: Location,
     },
 
-    #[error("ParseError: unexpected End Of File <eof>")]
+    #[error("ParseError: Unexpected End Of File '<eof>'")]
     EndOfFile,
 }
 

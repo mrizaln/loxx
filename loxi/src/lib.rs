@@ -21,7 +21,7 @@ macro_rules! println_red {
 
 #[derive(Debug, Error)]
 pub enum LoxError {
-    #[error("--[ LoxError ]-- Could not read file: {0}")]
+    #[error("--[ LoxError ]-- Could not read file: '{0}'")]
     IoError(#[from] io::Error),
 
     #[error("--[ LoxError ]-- {0} Lexing errors occurred, aborting...")]

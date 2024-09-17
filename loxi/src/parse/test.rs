@@ -110,7 +110,7 @@ fn parse_to_a_correct_ast() {
 
     assert!(result.errors.is_empty());
 
-    let mut parser = Parser::new(&result.tokens);
+    let parser = Parser::new(&result.tokens);
     let expr = parser.parse();
 
     assert!(matches!(expr, Ok(_)));

@@ -9,9 +9,10 @@ pub mod object;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
-    #[error("{0} RuntimeError: invalid binary operation ({1}) between {2} and {3}")]
+    #[error("{0} RuntimeError: Invalid binary operation '{1}' between '{2}' and '{3}'")]
     InvalidBinaryOp(Location, token::BinaryOp, &'static str, &'static str),
-    #[error("{0} RuntimeError: invalid unary operation ({1}) on {2}")]
+
+    #[error("{0} RuntimeError: Invalid unary operation '{1}' on '{2}'")]
     InvalidUnaryOp(Location, token::UnaryOp, &'static str),
 }
 
