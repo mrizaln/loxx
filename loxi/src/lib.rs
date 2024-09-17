@@ -78,14 +78,11 @@ pub fn run(program: &str) -> Result<(), LoxError> {
             };
             return Err(LoxError::ParseError);
         }
-        Ok(val) => {
-            println!("Expr: {val}");
-            val
-        }
+        Ok(val) => val,
     };
 
     match expr.eval() {
-        Ok(val) => println!("Eval: {val}"),
+        Ok(val) => println!("{val}"),
         Err(err) => {
             let loc = match err {
                 interp::RuntimeError::InvalidBinaryOp(loc, _, _, _) => loc,

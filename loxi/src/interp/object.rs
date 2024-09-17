@@ -1,7 +1,7 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 // TODO: use Rc for heavy object (String and LoxObject)
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(PartialEq, PartialOrd)]
 pub enum Value {
     Nil,
     Bool(bool),
@@ -118,7 +118,7 @@ impl Value {
     }
 }
 
-impl Display for Value {
+impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Nil => write!(f, "Nil"),
@@ -126,6 +126,18 @@ impl Display for Value {
             Value::Number(num) => write!(f, "Number({num})"),
             Value::String(str) => write!(f, "String({str})"),
             Value::Object(_) => write!(f, "Object(<dummy>)"),
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Nil => write!(f, "nil"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Number(num) => write!(f, "{num}"),
+            Value::String(str) => write!(f, "{str}"),
+            Value::Object(_) => write!(f, "<object>"),
         }
     }
 }
