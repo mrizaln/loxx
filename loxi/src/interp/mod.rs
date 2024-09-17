@@ -1,9 +1,7 @@
 use thiserror::Error;
 
-use crate::parse::{expr::Expr, token};
+use crate::parse::{stmt::Stmt, token, Program};
 use crate::util::Location;
-
-use self::object::Value;
 
 pub mod object;
 
@@ -16,56 +14,32 @@ pub enum RuntimeError {
     InvalidUnaryOp(Location, token::UnaryOp, &'static str),
 }
 
-impl Expr {
-    pub fn eval(self) -> Result<Value, RuntimeError> {
-        match self {
-            Expr::Literal { value } => match value.tok {
-                token::Literal::Number(num) => Ok(Value::Number(num)),
-                token::Literal::String(str) => Ok(Value::String(str)),
-                token::Literal::True => Ok(Value::Bool(true)),
-                token::Literal::False => Ok(Value::Bool(false)),
-                token::Literal::Nil => Ok(Value::Nil),
-            },
-            Expr::Grouping { expr } => expr.eval(),
-            Expr::Unary { operator, right } => {
-                let eval = right.eval()?;
-                match operator.tok {
-                    token::UnaryOp::Minus => eval.minus(),
-                    token::UnaryOp::Not => eval.not(),
-                }
-                .ok_or_else(|| {
-                    RuntimeError::InvalidUnaryOp(operator.loc, operator.tok, eval.name())
-                })
-            }
-            Expr::Binary {
-                left,
-                operator,
-                right,
-            } => {
-                let left = left.eval()?;
-                let right = right.eval()?;
+pub struct Interpreter {
+    // program context live here
+}
 
-                match operator.tok {
-                    token::BinaryOp::Add => left.add(&right),
-                    token::BinaryOp::Sub => left.sub(&right),
-                    token::BinaryOp::Mul => left.mul(&right),
-                    token::BinaryOp::Div => left.div(&right),
-                    token::BinaryOp::Equal => left.eq(&right),
-                    token::BinaryOp::NotEqual => left.neq(&right),
-                    token::BinaryOp::Less => left.lt(&right),
-                    token::BinaryOp::LessEq => left.le(&right),
-                    token::BinaryOp::Greater => left.gt(&right),
-                    token::BinaryOp::GreaterEq => left.ge(&right),
-                }
-                .ok_or_else(|| {
-                    RuntimeError::InvalidBinaryOp(
-                        operator.loc,
-                        operator.tok,
-                        left.name(),
-                        right.name(),
-                    )
-                })
-            }
+impl Interpreter {
+    pub fn new() -> Self {
+        Interpreter {}
+    }
+
+    pub fn interpret(&mut self, program: Program) -> Result<(), RuntimeError> {
+        for stmt in program.statements.into_iter() {
+            self.execute(stmt)?;
         }
+        Ok(())
+    }
+
+    fn execute(&mut self, stmt: Stmt) -> Result<(), RuntimeError> {
+        match stmt {
+            Stmt::Expr(expr) => {
+                expr.eval()?;
+            }
+            Stmt::Print { expr, .. } => {
+                let expr = expr.eval()?;
+                println!("{expr}");
+            }
+        };
+        Ok(())
     }
 }

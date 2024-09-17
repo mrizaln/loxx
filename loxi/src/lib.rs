@@ -1,8 +1,10 @@
+use core::panic;
 use std::fs::File;
 use std::io::{self, stdin, stdout, Read, Write};
 use std::path::PathBuf;
 use thiserror::Error;
 
+use self::interp::Interpreter;
 use self::lex::{Lexer, ScanResult};
 use self::parse::Parser;
 use self::util::Location;
@@ -63,7 +65,7 @@ pub fn run(program: &str) -> Result<(), LoxError> {
     }
 
     let parser = Parser::new(&tokens);
-    let expr = match parser.parse() {
+    let program = match parser.parse() {
         Err(err) => {
             match err {
                 #[rustfmt::skip]
@@ -71,9 +73,13 @@ pub fn run(program: &str) -> Result<(), LoxError> {
                     print_context(&lines, loc);
                     println_red!("{}", err);
                 }
-                parse::ParseError::EndOfFile => {
-                    // NOTE: this branch should never be selected
-                    println_red!("Unexpected EndOfFile at line {}", lines.len());
+                parse::ParseError::EndOfFile(loc) => {
+                    print_context(&lines, loc);
+                    println_red!("{}", err);
+                }
+                parse::ParseError::EmptyExpr(loc) => {
+                    print_context(&lines, loc);
+                    println_red!("{}", err);
                 }
             };
             return Err(LoxError::ParseError);
@@ -81,8 +87,8 @@ pub fn run(program: &str) -> Result<(), LoxError> {
         Ok(val) => val,
     };
 
-    match expr.eval() {
-        Ok(val) => println!("{val}"),
+    let mut interpreter = Interpreter::new();
+    match interpreter.interpret(program) {
         Err(err) => {
             let loc = match err {
                 interp::RuntimeError::InvalidBinaryOp(loc, _, _, _) => loc,
@@ -92,6 +98,7 @@ pub fn run(program: &str) -> Result<(), LoxError> {
             println_red!("{}", err);
             return Err(LoxError::RuntimeError);
         }
+        Ok(_) => (),
     }
 
     Ok(())

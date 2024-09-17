@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 pub trait Token {}
 
@@ -9,7 +9,7 @@ pub struct TokLoc<T: Token> {
 }
 
 // TODO: add other information like filename and column
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Location {
     pub line: usize,
     pub column: usize,
@@ -18,6 +18,12 @@ pub struct Location {
 impl Display for Location {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}:{}]", self.line, self.column)
+    }
+}
+
+impl Debug for Location {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(self, f)
     }
 }
 

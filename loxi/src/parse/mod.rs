@@ -1,3 +1,4 @@
+use core::panic;
 use std::iter::Peekable;
 use std::ops::Deref;
 use std::slice::Iter;
@@ -8,13 +9,19 @@ use crate::lex;
 use crate::util::{Location, TokLoc};
 
 use expr::Expr;
+use stmt::Stmt;
 
 pub mod expr;
+pub mod stmt;
 mod test;
 pub mod token;
 
 ///! Lox Grammar (unfinished)
 ///  ------------------------
+/// program    -> statement* EOF ;
+/// statement  -> expr_stmt | print_stmt ;
+/// expr_stmt  -> expression ";" ;
+/// print_stmt -> "print" expression ";" ;
 /// expression -> equality ;
 /// equality   -> comparison ( ( "!=" | "==" ) comparison )* ;
 /// comparison -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
@@ -33,29 +40,45 @@ pub enum ParseError {
         loc: Location,
     },
 
-    #[error("ParseError: Unexpected End Of File '<eof>'")]
-    EndOfFile,
+    #[error("ParseError: Unexpected end of file '<eof>'")]
+    EndOfFile(Location),
+
+    #[error("SyntaxErrror: Empty expression is not allowed")]
+    EmptyExpr(Location),
 }
 
 pub struct Parser<'a> {
     tokens: Peekable<Iter<'a, lex::Token>>,
-    // errors: Vec<ParseError>,
-    // panic_mode: bool,
 }
 
-pub type ParseResult = Result<Box<Expr>, ParseError>;
+pub struct Program {
+    pub statements: Vec<Stmt>,
+}
+
+pub type ExprResult = Result<Box<Expr>, ParseError>;
+pub type StmtResult = Result<Stmt, ParseError>;
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a Vec<lex::Token>) -> Self {
         Self {
             tokens: tokens.iter().peekable(),
-            // errors: Vec::new(),
-            // panic_mode: false,
         }
     }
 
-    pub fn parse(mut self) -> ParseResult {
-        self.expression()
+    pub fn parse(mut self) -> Result<Program, ParseError> {
+        let mut program = Program {
+            statements: Vec::new(),
+        };
+        while let Some(_) = self.peek() {
+            match self.statement() {
+                Ok(stmt) => program.statements.push(stmt),
+                Err(err) => match err {
+                    ParseError::EndOfFile(_) => break,
+                    _ => return Err(err),
+                },
+            }
+        }
+        Ok(program)
     }
 
     fn synchronize(&mut self) {
@@ -79,14 +102,63 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn expression(&mut self) -> ParseResult {
+    fn statement(&mut self) -> StmtResult {
+        match self.peek() {
+            Some(tok) => match tok {
+                lex::Token::Keyword(TokLoc {
+                    tok: lex::token::Keyword::Print,
+                    ..
+                }) => {
+                    let loc = self.advance().unwrap().loc();
+                    let expr = match self.expression_statement() {
+                        Ok(expr) => match expr {
+                            Stmt::Expr(expr) => expr,
+                            _ => panic!("Unexpected statement"),
+                        },
+                        Err(err) => match err {
+                            ParseError::EmptyExpr(loc) => Err(ParseError::SyntaxError {
+                                expect: "<expression>",
+                                real: "<empty>",
+                                loc,
+                            }),
+                            _ => Err(err),
+                        }?,
+                    };
+                    return Ok(Stmt::Print { loc, expr });
+                }
+                _ => self.expression_statement(),
+            },
+            None => panic!("Unexpected end of file"),
+        }
+    }
+
+    fn expression_statement(&mut self) -> StmtResult {
+        let expr = self.expression()?;
+        match self.peek() {
+            Some(lex::Token::Punctuation(TokLoc {
+                tok: lex::token::Punctuation::Semicolon,
+                loc: _,
+            })) => {
+                self.advance();
+                return Ok(Stmt::Expr(*expr));
+            }
+            Some(tok) => Err(ParseError::SyntaxError {
+                expect: (&lex::token::Punctuation::Semicolon).into(),
+                real: tok.static_str(),
+                loc: tok.loc(),
+            }),
+            None => panic!("Unexpected end of file"),
+        }
+    }
+
+    fn expression(&mut self) -> ExprResult {
         self.equality()
     }
 
-    fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ParseResult
+    fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
     where
         F1: Fn(&lex::Token) -> Option<TokLoc<token::BinaryOp>>,
-        F2: Fn(&mut Self) -> ParseResult,
+        F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
 
@@ -95,30 +167,45 @@ impl<'a> Parser<'a> {
             expr = Box::new(Expr::Binary {
                 left: expr,
                 operator: op,
-                right: inner(self)?,
+                right: match inner(self) {
+                    Ok(expr) => expr,
+                    Err(err) => match err {
+                        ParseError::EndOfFile(loc) => Err(ParseError::SyntaxError {
+                            expect: "<expression>",
+                            real: "<eof>",
+                            loc,
+                        })?,
+                        ParseError::EmptyExpr(loc) => Err(ParseError::SyntaxError {
+                            expect: "<expression>",
+                            real: "<empty>",
+                            loc,
+                        })?,
+                        _ => return Err(err),
+                    },
+                },
             });
         }
 
         Ok(expr)
     }
 
-    fn equality(&mut self) -> ParseResult {
+    fn equality(&mut self) -> ExprResult {
         self.binary(conv::to_equality, Self::comparison)
     }
 
-    fn comparison(&mut self) -> ParseResult {
+    fn comparison(&mut self) -> ExprResult {
         self.binary(conv::to_comparison, Self::term)
     }
 
-    fn term(&mut self) -> ParseResult {
+    fn term(&mut self) -> ExprResult {
         self.binary(conv::to_term, Self::factor)
     }
 
-    fn factor(&mut self) -> ParseResult {
+    fn factor(&mut self) -> ExprResult {
         self.binary(conv::to_factor, Self::unary)
     }
 
-    fn unary(&mut self) -> ParseResult {
+    fn unary(&mut self) -> ExprResult {
         if let Some(op) = self.peek().and_then(conv::to_unary) {
             self.advance();
             Ok(Box::new(Expr::Unary {
@@ -130,8 +217,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn primary(&mut self) -> ParseResult {
-        let curr = self.advance().ok_or(ParseError::EndOfFile)?;
+    fn primary(&mut self) -> ExprResult {
+        let curr = self.advance().expect("Unexpected end of file");
         let loc = curr.loc();
 
         enum Lit {
@@ -162,12 +249,14 @@ impl<'a> Parser<'a> {
                             self.advance();
                             return Ok(Box::new(Expr::Grouping { expr }));
                         }
-                        _ => Lit::No((&lex::token::Punctuation::ParenRight).into()),
+                        Some(tok) => Lit::No(tok.static_str()),
+                        None => return Err(ParseError::EndOfFile(loc)),
                     }
                 }
-                _ => Lit::No(curr.static_str()),
+                _ => return Err(ParseError::EmptyExpr(loc)),
             },
-            _ => Lit::No(curr.static_str()),
+            lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
+            _ => return Err(ParseError::EmptyExpr(loc)),
         };
 
         match lit {
@@ -175,7 +264,7 @@ impl<'a> Parser<'a> {
                 value: TokLoc { tok: lit, loc },
             })),
             Lit::No(str) => Err(ParseError::SyntaxError {
-                expect: "<literal>",
+                expect: "<expression>",
                 real: str,
                 loc,
             }),
