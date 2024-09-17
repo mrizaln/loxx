@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from enum import Enum
 from os.path import realpath, dirname
 from pathlib import Path, PurePath
-from typing import Dict, List
+import sys
+from typing import Dict, List, Tuple
+from subprocess import run
 import re
 
 DIR = Path(dirname(realpath(__file__)))
@@ -18,9 +20,17 @@ OUTPUT_EXPECT = re.compile(r"// expect: ?(.*)")
 ERROR_EXPECT = re.compile(r"// (Error.*)")
 ERROR_LINE_EXPECT = re.compile(r"// \[((java|c) )?line (\d+)\] (Error.*)")
 RUNTIME_ERROR_EXPECT = re.compile(r"// expect runtime error: (.+)")
-SYNTAX_ERROR_RE = re.compile(r"\[.*line (\d+)\] (Error.+)")
-STACK_TRACE_RE = re.compile(r"\[line (\d+)\]")
+
 NONTEST_RE = re.compile(r"// nontest")
+
+# [1:33] SyntaxError: expect '<literal>', got '+'
+SYNTAX_ERROR_RE = re.compile(r"\[(\d+):(\d+)\] SyntaxError: expect '(.+)', got '(.+)'")
+
+# [1:26] RuntimeError: Invalid binary operation '+' between '<bool>' and '<number>'
+RUNTIME_ERROR_RE = re.compile(r"\[(\d+):(\d+)\] RuntimeError: (.+)")
+
+# TODO: I haven't got this far :>
+STACK_TRACE_RE = re.compile(r"\[line (\d+)\]")
 
 
 class Variant(Enum):
@@ -95,19 +105,26 @@ class TestSuite:
 
     def __init__(self, chapter: Chapter, tests: Dict[str, str]):
         self.chapter = chapter
-        self.tests = []
+
+        candidates = []
+        skips = []
+
+        def add(test: Path, result: str):
+            if result == "pass":
+                candidates.append(test)
+            else:
+                skips.append(test)
 
         for test, result in tests.items():
-            if result == "skip":
-                continue
-
             if Path(test).is_file():
-                self.tests.append(Path(test))
+                add(Path(test), result)
                 continue
 
             for root, _, files in (DIR / test).walk():
                 for file in files:
-                    self.tests.append(root / file)
+                    add(root / file, result)
+
+        self.tests = [test for test in candidates if test not in skips]
 
 
 # populated by populate_tests() function
@@ -118,12 +135,21 @@ TESTS: Dict[Variant, List[TestSuite]] = {
 
 
 class Test:
+    @dataclass
+    class Expect:
+        count: int
+        exit_code: int
+        output: List[Tuple[int, str]]
+        compile_error: List[Tuple[int, str]]
+        runtime_error: Tuple[int, str] | None
+
     def __init__(self, interpreter: Interpreter, filter_path: PurePath | None):
         self.interpreter = interpreter
         self.failed: int = 0
         self.passed: int = 0
         self.skipped: int = 0
         self.expectations: int = 0
+        self.failures: Dict[Path, List[str]] = {}
         self.filter_path: PurePath | None = filter_path
         pass
 
@@ -169,9 +195,109 @@ class Test:
 
         return Result.PASS
 
-    def _run_test(self, test: Path) -> bool:
+    def _run_test(self, test: Path):
+        expect = self._parse_test(test)
+        if expect is None:
+            print(f"\t- 'test' is not a test file, skipping")
+            return
+
+        def args(exe: Exe):
+            match exe:
+                case Exe(_, _, Binary(bin)):
+                    return [str(bin)]
+                case Exe(_, _, Command(cmd)):
+                    return cmd
+                case _:
+                    raise TypeError("Not a Binary or Command, did you added new types?")
+
+        exec = args(self.interpreter.value)
+        proc = run(exec + [str(test)], capture_output=True, text=True)
+
+        stdout = proc.stdout
+        stderr = proc.stderr
+        returncode = proc.returncode
+
+        # print(f"expectations: {expect}")
+        print(stdout)
+        print("-" * 80)
+        # print(f"stderr: {stderr}")
+
+        return
+
+        self._validate(test, expect, output, error)
+
+    def _validate(self, test: Path, expect: Expect, output: str, error: str):
+        if expect.compile_error and expect.runtime_error:
+            self._fail(test, "Test error: can't expect both compile and runtime errors")
+            return
+
+        errlines = error.split("\n")
+
+        # Validate that an expected runtime error occurred.
+        if expect.runtime_error is not None:
+            self._validate_runtime_error(errlines, expect.runtime_error)
+        else:
+            self._validate_compile_errors(errlines, expect.compile_error)
+        pass
+
+    def _validate_runtime_error(self, lines: List[str], error: Tuple[int, str]):
+        # Skip any compile errors. This can happen if there is a compile error in
+        # a module loaded by the module being tested.
+        line = 0
+        while SYNTAX_ERROR_RE.search(lines[line]):
+            line += 1
+
+        # TODO: implement
+
+        pass
+
+    def _validate_compile_errors(self, lines: List[str], errors: List[Tuple[int, str]]):
+        pass
+
+    def _fail(self, test: Path, message: str):
+        self.failures[test].append(message)
+
+    def _parse_test(self, test: Path) -> Expect | None:
+        exit_code: int = 0
+        expectations: int = 0
+
+        output: List[Tuple[int, str]] = []
+        compile_error: List[Tuple[int, str]] = []
+        runtime_error: Tuple[int, str] | None = None
+
+        to_var = lambda lang: Variant.TREE_WALK if lang == "java" else Variant.BYTECODE
+
         print(f"\trunning '{test}'")
-        return True
+        with open(test, "r") as file:
+            for i, line in enumerate(file, 1):
+                if match := OUTPUT_EXPECT.search(line):
+                    output.append((i, match.group(1)))
+                    expectations += 1
+                if match := ERROR_EXPECT.search(line):
+                    compile_error.append((i, match.group(1)))
+                    exit_code = 65
+                    expectations += 1
+                if match := ERROR_LINE_EXPECT.search(line):
+                    # The two interpreters are slightly different in terms of which
+                    # cascaded errors may appear after an initial compile error because
+                    # their panic mode recovery is a little different. To handle that,
+                    # the tests can indicate if an error line should only appear for a
+                    # certain interpreter.
+                    lang = match.group(2)
+                    if not lang or to_var(lang) == self.interpreter.value.variant:
+                        compile_error.append((int(match.group(3)), match.group(4)))
+                        exit_code = 65
+                        expectations += 1
+                if match := RUNTIME_ERROR_EXPECT.search(line):
+                    runtime_error = (i, match.group(1))
+                    exit_code = 70
+                    expectations += 1
+                if match := NONTEST_RE.search(line):
+                    return None
+
+        return Test.Expect(
+            expectations, exit_code, output, compile_error, runtime_error
+        )
 
     def _suite_from_chapter(self, chapter: Chapter) -> TestSuite | None:
         tests = TESTS[self.interpreter.value.variant]
@@ -202,6 +328,10 @@ def main() -> int:
         default=None,
         choices=[c.name.lower() for c in Chapter],
     )
+
+    if len(sys.argv) == 1:
+        parser.print_help(sys.stderr)
+        return 1
 
     args = parser.parse_args()
     filter = None if args.f is None else Path(args.f)
