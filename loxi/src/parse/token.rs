@@ -90,6 +90,14 @@ impl Display for BinaryOp {
     }
 }
 
+// TODO: place the name inside a global container or something then use a reference to access the
+//       name so theres no cloning required
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct Variable {
+    pub name: String,
+}
+
 impl Token for Literal {}
 impl Token for UnaryOp {}
 impl Token for BinaryOp {}
+impl Token for Variable {}

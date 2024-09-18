@@ -32,13 +32,14 @@ impl Interpreter {
 
     fn execute(&mut self, stmt: Stmt) -> Result<(), RuntimeError> {
         match stmt {
-            Stmt::Expr(expr) => {
+            Stmt::Expr { expr } => {
                 expr.eval()?;
             }
             Stmt::Print { expr, .. } => {
                 let expr = expr.eval()?;
                 println!("{expr}");
             }
+            Stmt::Var { loc, name, init } => todo!(),
         };
         Ok(())
     }

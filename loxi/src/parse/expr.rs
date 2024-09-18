@@ -22,6 +22,9 @@ pub enum Expr {
     Grouping {
         expr: Box<Expr>,
     },
+    Variable {
+        value: TokLoc<token::Variable>,
+    },
 }
 
 impl Expr {
@@ -74,6 +77,7 @@ impl Expr {
                     )
                 })
             }
+            Expr::Variable { .. } => unimplemented!(),
         }
     }
 }
@@ -98,6 +102,7 @@ impl Display for Expr {
             Expr::Grouping { expr } => {
                 format!("('group' {expr})")
             }
+            Expr::Variable { .. } => unimplemented!(),
         };
         write!(f, "{}", string)
     }
@@ -126,6 +131,7 @@ impl Debug for Expr {
             Expr::Grouping { expr } => {
                 format!("('group' {expr:?})")
             }
+            Expr::Variable { .. } => unimplemented!(),
         };
         write!(f, "{}", string)
     }

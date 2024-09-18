@@ -1,15 +1,16 @@
-use core::panic;
 use std::iter::Peekable;
 use std::ops::Deref;
 use std::slice::Iter;
 
 use thiserror::Error;
 
-use crate::lex;
+use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
 
 use expr::Expr;
 use stmt::Stmt;
+
+use macros::{consume_no_eof, syntax_error};
 
 pub mod expr;
 pub mod stmt;
@@ -18,37 +19,46 @@ pub mod token;
 
 ///! Lox Grammar (unfinished)
 ///  ------------------------
-/// program    -> statement* EOF ;
-/// statement  -> expr_stmt | print_stmt ;
-/// expr_stmt  -> expression ";" ;
-/// print_stmt -> "print" expression ";" ;
-/// expression -> equality ;
-/// equality   -> comparison ( ( "!=" | "==" ) comparison )* ;
-/// comparison -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-/// term       -> factor ( ( "-" | "+" ) factor )* ;
-/// factor     -> unary ( ( "/" | "*" ) unary )* ;
-/// unary      -> ( "!" | "-" ) unary | primary ;
-/// primary    -> NUMBER | STRING | "true" | "false" | "nil" | grouping ;
-/// grouping   -> "(" expression ")"
+/// program     -> declaration* EOF ;
+/// declaration -> var_decl | statement ;
+/// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
+/// statement   -> expr_stmt | print_stmt ;
+/// expr_stmt   -> expression ";" ;
+/// print_stmt  -> "print" expression ";" ;
+/// expression  -> equality ;
+/// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
+/// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+/// term        -> factor ( ( "-" | "+" ) factor )* ;
+/// factor      -> unary ( ( "/" | "*" ) unary )* ;
+/// unary       -> ( "!" | "-" ) unary | primary ;
+/// primary     -> NUMBER | STRING | "true" | "false" | "nil" | grouping | IDENTIFIER ;
+/// grouping    -> "(" expression ")"
 
 #[derive(Debug, Error)]
+#[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
+pub struct SyntaxError {
+    pub expect: &'static str,
+    pub real: &'static str,
+    pub loc: Location,
+}
+
 pub enum ParseError {
-    #[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
-    SyntaxError {
-        expect: &'static str,
-        real: &'static str,
-        loc: Location,
-    },
-
-    #[error("ParseError: Unexpected end of file '<eof>'")]
+    SyntaxError(SyntaxError),
     EndOfFile(Location),
+}
 
-    #[error("SyntaxErrror: Empty expression is not allowed")]
-    EmptyExpr(Location),
+impl ParseError {
+    pub fn loc(&self) -> Location {
+        match self {
+            ParseError::SyntaxError(SyntaxError { loc, .. }) => *loc,
+            ParseError::EndOfFile(loc) => *loc,
+        }
+    }
 }
 
 pub struct Parser<'a> {
     tokens: Peekable<Iter<'a, lex::Token>>,
+    eof: Location,
 }
 
 pub struct Program {
@@ -59,41 +69,49 @@ pub type ExprResult = Result<Box<Expr>, ParseError>;
 pub type StmtResult = Result<Stmt, ParseError>;
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a Vec<lex::Token>) -> Self {
+    pub fn new(tokens: &'a [lex::Token]) -> Self {
         Self {
             tokens: tokens.iter().peekable(),
+            eof: tokens.last().expect("The slice must not be empty").loc(),
         }
     }
 
-    pub fn parse(mut self) -> Result<Program, ParseError> {
+    pub fn parse(mut self) -> Result<Program, Vec<SyntaxError>> {
         let mut program = Program {
             statements: Vec::new(),
         };
-        while let Some(_) = self.peek() {
-            match self.statement() {
+        let mut errors = Vec::new();
+
+        loop {
+            match self.declaration() {
                 Ok(stmt) => program.statements.push(stmt),
                 Err(err) => match err {
                     ParseError::EndOfFile(_) => break,
-                    _ => return Err(err),
+                    ParseError::SyntaxError(err) => {
+                        // tentative
+                        errors.push(err);
+                        return Err(errors);
+                    }
                 },
             }
         }
+
         Ok(program)
     }
 
     fn synchronize(&mut self) {
-        while let Some(tok) = self.peek() {
+        while let Ok(tok) = self.peek() {
             match tok {
                 lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
-                    lex::token::Keyword::Class => break,
-                    lex::token::Keyword::If => break,
-                    lex::token::Keyword::Else => unimplemented!(),
-                    lex::token::Keyword::For => break,
-                    lex::token::Keyword::While => break,
-                    lex::token::Keyword::Fun => break,
-                    lex::token::Keyword::Print => break,
-                    lex::token::Keyword::Return => break,
-                    lex::token::Keyword::Var => break,
+                    ltok::Keyword::Class => break,
+                    ltok::Keyword::If => break,
+                    ltok::Keyword::Else => unimplemented!(),
+                    ltok::Keyword::For => break,
+                    ltok::Keyword::While => break,
+                    ltok::Keyword::Fun => break,
+                    ltok::Keyword::Print => break,
+                    ltok::Keyword::Return => break,
+                    ltok::Keyword::Var => break,
                     _ => (),
                 },
                 _ => (),
@@ -102,49 +120,95 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn statement(&mut self) -> StmtResult {
-        match self.peek() {
-            Some(tok) => match tok {
-                lex::Token::Keyword(TokLoc {
-                    tok: lex::token::Keyword::Print,
-                    ..
-                }) => {
-                    let loc = self.advance().unwrap().loc();
-                    let expr = match self.expression_statement()? {
-                        Stmt::Expr(expr) => expr,
-                        _ => panic!("Unexpected statement"),
-                    };
-                    return Ok(Stmt::Print { loc, expr });
-                }
-                _ => self.expression_statement(),
+    fn declaration(&mut self) -> StmtResult {
+        match self.peek()? {
+            lex::Token::Keyword(TokLoc {
+                tok: ltok::Keyword::Var,
+                ..
+            }) => {
+                self.advance();
+                self.var_declaration()
+            }
+            _ => self.statement(),
+        }
+        .map_err(|err| {
+            self.synchronize();
+            err
+        })
+    }
+
+    fn var_declaration(&mut self) -> StmtResult {
+        let (name, loc) = consume_no_eof! {
+            self as ["<identifier>"]
+            if   lex::Token::Literal(TokLoc { tok: ltok::Literal::Identifier(name), loc }),
+            then (name.clone(), loc.clone()),       // TODO: move instead
+        }?;
+        self.advance(); // separate advance from consume! because both borrows self
+
+        let init = consume_no_eof! {
+            self as ["<expression>"]
+            if   lex::Token::Operator(TokLoc { tok: ltok::Operator::Equal, .. }),
+            then {
+                self.advance();
+                Some(*(self.expression())?)
             },
-            None => panic!("Unexpected end of file"),
+            else None,
+        }?;
+
+        consume_no_eof! {
+            self as [";"]
+            if   lex::Token::Punctuation(TokLoc { tok: ltok::Punctuation::Semicolon, .. }),
+            then self.advance(),
+        }?;
+
+        Ok(Stmt::Var { loc, name, init })
+    }
+
+    fn statement(&mut self) -> StmtResult {
+        match self.peek()? {
+            lex::Token::Keyword(TokLoc {
+                tok: ltok::Keyword::Print,
+                ..
+            }) => {
+                let loc = self.advance().unwrap().loc();
+                let expr = match self.expression_statement() {
+                    Ok(Stmt::Expr { expr }) => expr,
+                    Ok(_) => unreachable!(),
+                    Err(ParseError::EndOfFile(loc)) => {
+                        return Err(syntax_error!("<expression>", "<eof", loc))
+                    }
+                    Err(err) => return Err(err),
+                };
+                Ok(Stmt::Print { loc, expr })
+            }
+            _ => self.expression_statement(),
         }
     }
 
     fn expression_statement(&mut self) -> StmtResult {
-        let expr = self.expression().map_err(|err| match err {
-            ParseError::EmptyExpr(loc) => ParseError::SyntaxError {
-                expect: "<expression>",
-                real: "<empty>",
-                loc,
-            },
-            _ => err,
-        })?;
-        match self.peek() {
-            Some(lex::Token::Punctuation(TokLoc {
-                tok: lex::token::Punctuation::Semicolon,
+        // let expr = self.expression().map_err(|err| match err {
+        //     ParseError::Empty(loc) => ParseError::SyntaxError(SyntaxError {
+        //         expect: "<expression>",
+        //         real: "<empty>",
+        //         loc,
+        //     }),
+        //     _ => err,
+        // })?;
+        let expr = self.expression()?;
+
+        match self.peek()? {
+            lex::Token::Punctuation(TokLoc {
+                tok: ltok::Punctuation::Semicolon,
                 loc: _,
-            })) => {
+            }) => {
                 self.advance();
-                return Ok(Stmt::Expr(*expr));
+                return Ok(Stmt::Expr { expr: *expr });
             }
-            Some(tok) => Err(ParseError::SyntaxError {
-                expect: (&lex::token::Punctuation::Semicolon).into(),
-                real: tok.static_str(),
-                loc: tok.loc(),
-            }),
-            None => panic!("Unexpected end of file"),
+            tok => Err(syntax_error!(
+                (&ltok::Punctuation::Semicolon).into(),
+                tok.static_str(),
+                tok.loc()
+            )),
         }
     }
 
@@ -159,22 +223,13 @@ impl<'a> Parser<'a> {
     {
         let mut expr = inner(self)?;
 
-        while let Some(op) = self.peek().and_then(&curr) {
+        while let Some(op) = curr(self.peek()?) {
             self.advance();
             expr = Box::new(Expr::Binary {
                 left: expr,
                 operator: op,
                 right: inner(self).map_err(|err| match err {
-                    ParseError::EndOfFile(loc) => ParseError::SyntaxError {
-                        expect: "<expression>",
-                        real: "<eof>",
-                        loc,
-                    },
-                    ParseError::EmptyExpr(loc) => ParseError::SyntaxError {
-                        expect: "<expression>",
-                        real: "<empty>",
-                        loc,
-                    },
+                    ParseError::EndOfFile(loc) => syntax_error!("<expression>", "<eof>", loc),
                     _ => err,
                 })?,
             });
@@ -200,7 +255,7 @@ impl<'a> Parser<'a> {
     }
 
     fn unary(&mut self) -> ExprResult {
-        if let Some(op) = self.peek().and_then(conv::to_unary) {
+        if let Some(op) = conv::to_unary(self.peek()?) {
             self.advance();
             Ok(Box::new(Expr::Unary {
                 operator: op,
@@ -216,57 +271,60 @@ impl<'a> Parser<'a> {
         let loc = curr.loc();
 
         enum Lit {
-            Yes(token::Literal),
+            Lit(token::Literal),
+            Var(token::Variable),
             No(&'static str),
         }
 
         let lit = match curr {
             lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
-                lex::token::Keyword::True => Lit::Yes(token::Literal::True),
-                lex::token::Keyword::False => Lit::Yes(token::Literal::False),
-                lex::token::Keyword::Nil => Lit::Yes(token::Literal::Nil),
+                ltok::Keyword::True => Lit::Lit(token::Literal::True),
+                ltok::Keyword::False => Lit::Lit(token::Literal::False),
+                ltok::Keyword::Nil => Lit::Lit(token::Literal::Nil),
                 _ => Lit::No(tok.into()),
             },
             lex::Token::Literal(TokLoc { tok, .. }) => match tok {
-                lex::token::Literal::String(str) => Lit::Yes(token::Literal::String(str.clone())), // TODO: move instead
-                lex::token::Literal::Number(num) => Lit::Yes(token::Literal::Number(*num)),
-                lex::token::Literal::Identifier(_) => unimplemented!(), // TODO: implement
+                ltok::Literal::String(str) => Lit::Lit(token::Literal::String(str.clone())), // TODO: move instead
+                ltok::Literal::Number(num) => Lit::Lit(token::Literal::Number(*num)),
+                ltok::Literal::Identifier(name) => Lit::Var(token::Variable { name: name.clone() }),
             },
             lex::Token::Punctuation(TokLoc { tok, .. }) => match tok {
-                lex::token::Punctuation::ParenLeft => {
+                ltok::Punctuation::ParenLeft => {
                     let expr = self.expression()?;
-                    match self.peek() {
-                        Some(lex::Token::Punctuation(TokLoc {
-                            tok: lex::token::Punctuation::ParenRight,
+                    match self.peek()? {
+                        lex::Token::Punctuation(TokLoc {
+                            tok: ltok::Punctuation::ParenRight,
                             loc: _,
-                        })) => {
+                        }) => {
                             self.advance();
                             return Ok(Box::new(Expr::Grouping { expr }));
                         }
-                        Some(tok) => Lit::No(tok.static_str()),
-                        None => return Err(ParseError::EndOfFile(loc)),
+                        tok => Lit::No(tok.static_str()),
                     }
                 }
-                _ => return Err(ParseError::EmptyExpr(loc)),
+                _ => Lit::No(tok.into()),
             },
             lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
-            _ => return Err(ParseError::EmptyExpr(loc)),
+            _ => Lit::No(curr.static_str()),
         };
 
         match lit {
-            Lit::Yes(lit) => Ok(Box::new(Expr::Literal {
+            Lit::Lit(lit) => Ok(Box::new(Expr::Literal {
                 value: TokLoc { tok: lit, loc },
             })),
-            Lit::No(str) => Err(ParseError::SyntaxError {
-                expect: "<expression>",
-                real: str,
-                loc,
-            }),
+            Lit::Var(var) => Ok(Box::new(Expr::Variable {
+                value: TokLoc { tok: var, loc },
+            })),
+            Lit::No(str) => Err(syntax_error!("<expression>", str, loc)),
         }
     }
 
-    fn peek(&mut self) -> Option<&lex::Token> {
-        self.tokens.peek().map(&Deref::deref)
+    fn peek(&mut self) -> Result<&lex::Token, ParseError> {
+        match self.tokens.peek().map(&Deref::deref) {
+            Some(lex::Token::Eof(_)) => Err(ParseError::EndOfFile(self.eof)),
+            None => Err(ParseError::EndOfFile(self.eof)),
+            Some(tok) => Ok(tok),
+        }
     }
 
     fn advance(&mut self) -> Option<&lex::Token> {
@@ -280,8 +338,8 @@ mod conv {
     pub fn to_equality(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                lex::token::Operator::BangEqual => token::BinaryOp::NotEqual,
-                lex::token::Operator::EqualEqual => token::BinaryOp::Equal,
+                ltok::Operator::BangEqual => token::BinaryOp::NotEqual,
+                ltok::Operator::EqualEqual => token::BinaryOp::Equal,
                 _ => return None,
             },
             _ => return None,
@@ -296,10 +354,10 @@ mod conv {
     pub fn to_comparison(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                lex::token::Operator::Greater => token::BinaryOp::Greater,
-                lex::token::Operator::GreaterEqual => token::BinaryOp::GreaterEq,
-                lex::token::Operator::Less => token::BinaryOp::Less,
-                lex::token::Operator::LessEqual => token::BinaryOp::LessEq,
+                ltok::Operator::Greater => token::BinaryOp::Greater,
+                ltok::Operator::GreaterEqual => token::BinaryOp::GreaterEq,
+                ltok::Operator::Less => token::BinaryOp::Less,
+                ltok::Operator::LessEqual => token::BinaryOp::LessEq,
                 _ => return None,
             },
             _ => return None,
@@ -313,8 +371,8 @@ mod conv {
     pub fn to_term(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                lex::token::Operator::Plus => token::BinaryOp::Add,
-                lex::token::Operator::Minus => token::BinaryOp::Sub,
+                ltok::Operator::Plus => token::BinaryOp::Add,
+                ltok::Operator::Minus => token::BinaryOp::Sub,
                 _ => return None,
             },
             _ => return None,
@@ -328,8 +386,8 @@ mod conv {
     pub fn to_factor(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                lex::token::Operator::Star => token::BinaryOp::Mul,
-                lex::token::Operator::Slash => token::BinaryOp::Div,
+                ltok::Operator::Star => token::BinaryOp::Mul,
+                ltok::Operator::Slash => token::BinaryOp::Div,
                 _ => return None,
             },
             _ => return None,
@@ -343,8 +401,8 @@ mod conv {
     pub fn to_unary(tok: &lex::Token) -> Option<TokLoc<token::UnaryOp>> {
         let new_tok = match tok {
             lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                lex::token::Operator::Bang => token::UnaryOp::Not,
-                lex::token::Operator::Minus => token::UnaryOp::Minus,
+                ltok::Operator::Bang => token::UnaryOp::Not,
+                ltok::Operator::Minus => token::UnaryOp::Minus,
                 _ => return None,
             },
             _ => return None,
@@ -354,4 +412,38 @@ mod conv {
             loc: tok.loc(),
         })
     }
+}
+
+mod macros {
+    macro_rules! syntax_error {
+        ($expect:expr, $real:expr, $loc:expr) => {
+            ParseError::SyntaxError(SyntaxError {
+                expect: $expect,
+                real: $real,
+                loc: $loc,
+            })
+        };
+    }
+
+    macro_rules! consume_no_eof {
+        ($self:ident as [$name:expr] if $tok:pat, then $xpr:expr,) => {
+            match $self.peek() {
+                Ok($tok) => Ok($xpr),
+                Ok(tok) => Err(syntax_error!($name, tok.static_str(), tok.loc())),
+                Err(ParseError::EndOfFile(loc)) => Err(syntax_error!($name, "<eof>", loc)),
+                Err(err) => Err(err),
+            }
+        };
+        ($self:ident as [$name:expr] if $tok:pat, then $xpr1:expr, else $xpr2:expr,) => {
+            match $self.peek() {
+                Ok($tok) => Ok($xpr1),
+                Ok(_) => Ok($xpr2),
+                Err(ParseError::EndOfFile(loc)) => Err(syntax_error!($name, "<eof>", loc)),
+                Err(err) => Err(err),
+            }
+        };
+    }
+
+    pub(crate) use consume_no_eof;
+    pub(crate) use syntax_error;
 }

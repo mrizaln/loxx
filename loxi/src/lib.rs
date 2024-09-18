@@ -60,26 +60,18 @@ pub fn run(program: &str) -> Result<(), LoxError> {
         return Err(LoxError::LexError(errors.len()));
     }
 
+    // only <eof> exist
     if tokens.len() == 1 {
         return Err(LoxError::EmptyError);
     }
 
     let parser = Parser::new(&tokens);
     let program = parser.parse().map_err(|err| {
-        match err {
-            parse::ParseError::SyntaxError { loc, .. } => {
-                print_context(&lines, loc);
-                println_red!("{}", err);
-            }
-            parse::ParseError::EndOfFile(loc) => {
-                print_context(&lines, loc);
-                println_red!("{}", err);
-            }
-            parse::ParseError::EmptyExpr(loc) => {
-                print_context(&lines, loc);
-                println_red!("{}", err);
-            }
-        }
+        err.iter().for_each(|e| {
+            print_context(&lines, e.loc);
+            println_red!("{}", e);
+        });
+
         LoxError::ParseError
     })?;
 
@@ -145,7 +137,7 @@ pub fn run_prompt() -> io::Result<()> {
 }
 
 #[rustfmt::skip]
-fn print_context(lines: &Vec<&str>, loc: Location) {
+fn print_context(lines: &[&str], loc: Location) {
     let line = match loc.line > lines.len() {
         true => "",
         false => lines[loc.line - 1],

@@ -6,7 +6,7 @@ use crate::lex::Lexer;
 use crate::parse::Parser;
 use crate::util::{Location, TokLoc};
 
-use super::{expr::*, token};
+use super::{expr::*, stmt::*, token};
 
 macro_rules! tokl {
     ([$loc:expr] -> $type:ident::$var:ident) => {
@@ -28,7 +28,7 @@ macro_rules! tokl {
 }
 
 static EXPRESSION: &str = indoc! { r#"
-    1 * (2 - 3) < 4 == false
+    1 * (2 - 3) < 4 == false;
 "# };
 
 fn get_reference_ast() -> Expr {
@@ -115,6 +115,8 @@ fn parse_to_a_correct_ast() {
 
     assert!(matches!(expr, Ok(_)));
 
-    let expr = expr.unwrap();
-    assert_eq!(*expr, get_reference_ast());
+    match expr.unwrap().statements.first().unwrap() {
+        Stmt::Expr { expr } => assert_eq!(*expr, get_reference_ast()),
+        _ => assert!(false),
+    };
 }
