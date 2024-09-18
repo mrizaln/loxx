@@ -77,11 +77,7 @@ pub fn run(program: &str) -> Result<(), LoxError> {
 
     let mut interpreter = Interpreter::new();
     let _ = interpreter.interpret(program).map_err(|err| {
-        let loc = match err {
-            interp::RuntimeError::InvalidBinaryOp(loc, _, _, _) => loc,
-            interp::RuntimeError::InvalidUnaryOp(loc, _, _) => loc,
-        };
-        print_context(&lines, loc);
+        print_context(&lines, err.loc());
         println_red!("{}", err);
         LoxError::RuntimeError
     })?;

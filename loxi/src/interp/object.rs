@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 // TODO: use Rc for heavy object (String and LoxObject)
-#[derive(PartialEq, PartialOrd)]
+#[derive(Clone, PartialEq, PartialOrd)]
 pub enum Value {
     Nil,
     Bool(bool),
@@ -11,7 +11,7 @@ pub enum Value {
 }
 
 // TODO: create the actual object
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct LoxObject {}
 
 impl Value {
@@ -35,36 +35,35 @@ impl Value {
         }
     }
 
-    pub fn add(&self, other: &Self) -> Option<Value> {
+    pub fn add(self, other: Self) -> Option<Value> {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(*num1 + *num2)),
-            (Value::String(str1), Value::String(str2)) => Some(Value::String(str1.clone() + str2)), // Rc
+            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(num1 + num2)),
+            (Value::String(str1), Value::String(str2)) => Some(Value::String(str1 + &str2)),
             _ => None,
         }
     }
 
-    pub fn sub(&self, other: &Self) -> Option<Value> {
+    pub fn sub(self, other: Self) -> Option<Value> {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(*num1 - *num2)),
+            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(num1 - num2)),
             _ => None,
         }
     }
 
-    pub fn mul(&self, other: &Self) -> Option<Value> {
+    pub fn mul(self, other: Self) -> Option<Value> {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(*num1 * *num2)),
+            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(num1 * num2)),
             _ => None,
         }
     }
 
-    pub fn div(&self, other: &Self) -> Option<Value> {
+    pub fn div(self, other: Self) -> Option<Value> {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(*num1 / *num2)),
+            (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(num1 / num2)),
             _ => None,
         }
     }
 
-    // TODO: re-check the Lox language rule
     pub fn eq(&self, other: &Self) -> Option<Value> {
         match (self, other) {
             (Value::Nil, Value::Nil) => Some(Value::Bool(true)),

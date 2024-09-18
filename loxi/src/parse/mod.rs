@@ -7,7 +7,10 @@ use thiserror::Error;
 use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
 
-use expr::Expr;
+use expr::{
+    macros::{group_expr, ref_expr, val_expr},
+    Expr, RefExpr, ValExpr,
+};
 use stmt::Stmt;
 
 use macros::{consume_no_eof, syntax_error};
@@ -225,14 +228,14 @@ impl<'a> Parser<'a> {
 
         while let Some(op) = curr(self.peek()?) {
             self.advance();
-            expr = Box::new(Expr::Binary {
+            expr = Box::new(val_expr!(Binary {
                 left: expr,
                 operator: op,
                 right: inner(self).map_err(|err| match err {
                     ParseError::EndOfFile(loc) => syntax_error!("<expression>", "<eof>", loc),
                     _ => err,
                 })?,
-            });
+            }));
         }
 
         Ok(expr)
@@ -257,10 +260,10 @@ impl<'a> Parser<'a> {
     fn unary(&mut self) -> ExprResult {
         if let Some(op) = conv::to_unary(self.peek()?) {
             self.advance();
-            Ok(Box::new(Expr::Unary {
+            Ok(Box::new(val_expr!(Unary {
                 operator: op,
                 right: self.unary()?,
-            }))
+            })))
         } else {
             self.primary()
         }
@@ -297,7 +300,7 @@ impl<'a> Parser<'a> {
                             loc: _,
                         }) => {
                             self.advance();
-                            return Ok(Box::new(Expr::Grouping { expr }));
+                            return Ok(Box::new(group_expr!(*expr)));
                         }
                         tok => Lit::No(tok.static_str()),
                     }
@@ -309,12 +312,12 @@ impl<'a> Parser<'a> {
         };
 
         match lit {
-            Lit::Lit(lit) => Ok(Box::new(Expr::Literal {
+            Lit::Lit(lit) => Ok(Box::new(val_expr!(Literal {
                 value: TokLoc { tok: lit, loc },
-            })),
-            Lit::Var(var) => Ok(Box::new(Expr::Variable {
-                value: TokLoc { tok: var, loc },
-            })),
+            }))),
+            Lit::Var(var) => Ok(Box::new(ref_expr!(Variable {
+                var: TokLoc { tok: var, loc },
+            }))),
             Lit::No(str) => Err(syntax_error!("<expression>", str, loc)),
         }
     }
