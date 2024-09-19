@@ -1,3 +1,4 @@
+use core::panic;
 use std::iter::Peekable;
 use std::ops::Deref;
 use std::slice::Iter;
@@ -28,7 +29,8 @@ pub mod token;
 /// statement   -> expr_stmt | print_stmt ;
 /// expr_stmt   -> expression ";" ;
 /// print_stmt  -> "print" expression ";" ;
-/// expression  -> equality ;
+/// expression  -> assignment ;
+/// assignment  -> IDENTIFIER "=" assignment | equality ;
 /// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
 /// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 /// term        -> factor ( ( "-" | "+" ) factor )* ;
@@ -107,7 +109,7 @@ impl<'a> Parser<'a> {
                 lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
                     ltok::Keyword::Class => break,
                     ltok::Keyword::If => break,
-                    ltok::Keyword::Else => unimplemented!(),
+                    ltok::Keyword::Else => break,
                     ltok::Keyword::For => break,
                     ltok::Keyword::While => break,
                     ltok::Keyword::Fun => break,
@@ -188,14 +190,6 @@ impl<'a> Parser<'a> {
     }
 
     fn expression_statement(&mut self) -> StmtResult {
-        // let expr = self.expression().map_err(|err| match err {
-        //     ParseError::Empty(loc) => ParseError::SyntaxError(SyntaxError {
-        //         expect: "<expression>",
-        //         real: "<empty>",
-        //         loc,
-        //     }),
-        //     _ => err,
-        // })?;
         let expr = self.expression()?;
 
         match self.peek()? {
@@ -215,7 +209,7 @@ impl<'a> Parser<'a> {
     }
 
     fn expression(&mut self) -> ExprResult {
-        self.equality()
+        self.assignment()
     }
 
     fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
@@ -238,6 +232,32 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    fn assignment(&mut self) -> ExprResult {
+        let expr = self.equality()?;
+
+        match self.peek()? {
+            lex::Token::Operator(TokLoc {
+                tok: ltok::Operator::Equal,
+                ..
+            }) => {
+                let loc = self.advance().unwrap().loc();
+                let value = self.assignment()?;
+
+                match *expr {
+                    Expr::RefExpr(lvalue) => match lvalue {
+                        RefExpr::Variable { var } => {
+                            Ok(Box::new(ref_expr!(Assignment { var, value })))
+                        }
+                        RefExpr::Assignment { .. } => unreachable!(),
+                        RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
+                    },
+                    Expr::ValExpr(_) => Err(syntax_error!("<lvalue>", "<rvalue>", loc)),
+                }
+            }
+            _ => Ok(expr),
+        }
     }
 
     fn equality(&mut self) -> ExprResult {

@@ -37,8 +37,16 @@ pub enum ValExpr {
 // expression that references a value
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum RefExpr {
-    Variable { var: TokLoc<token::Variable> },
-    Grouping { expr: Box<RefExpr> },
+    Variable {
+        var: TokLoc<token::Variable>,
+    },
+    Grouping {
+        expr: Box<RefExpr>,
+    },
+    Assignment {
+        var: TokLoc<token::Variable>,
+        value: Box<Expr>,
+    },
 }
 
 impl ValExpr {
@@ -109,6 +117,16 @@ impl RefExpr {
                     .ok_or(RuntimeError::UndefinedVariable(loc, name))
             }
             RefExpr::Grouping { expr } => expr.eval(env),
+            RefExpr::Assignment { var, value } => {
+                let value = eval_cloned!(*value, env)?;
+                let name = var.tok.name;
+                env.get_mut(&name)
+                    .ok_or(RuntimeError::UndefinedVariable(var.loc, name))
+                    .map(|v| {
+                        *v = value;
+                        v
+                    })
+            }
         }
     }
 }
@@ -173,6 +191,7 @@ impl Display for RefExpr {
                 var: TokLoc { tok, .. },
             } => write!(f, "('var' {})", tok.name),
             RefExpr::Grouping { expr } => Display::fmt(&expr, f),
+            RefExpr::Assignment { var, value } => write!(f, "(= {} {})", var.tok.name, value),
         }
     }
 }
@@ -184,6 +203,9 @@ impl Debug for RefExpr {
                 var: TokLoc { tok, loc },
             } => write!(f, "('var'{} {})", loc, tok.name),
             RefExpr::Grouping { expr } => Debug::fmt(&expr, f),
+            RefExpr::Assignment { var, value } => {
+                write!(f, "(={} {} {:?})", var.loc, var.tok.name, value)
+            }
         }
     }
 }
