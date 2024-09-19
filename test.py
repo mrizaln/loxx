@@ -13,6 +13,7 @@ import sys
 from typing import Dict, List, Tuple
 from subprocess import run
 import re
+import textwrap
 
 DIR = Path(dirname(realpath(__file__)))
 
@@ -60,10 +61,21 @@ class Interpreter(Enum):
     LOXII = Exe("loxii", Variant.BYTECODE, Binary(DIR / "target" / "debug" / "loxii"))
 
 
-class Result(Enum):
-    PASS = "pass"
-    FAIL = "fail"
-    SKIP = "skip"
+@dataclass
+class Result:
+    passed: int = 0
+    skipped: int = 0
+    failed: int = 0
+
+    def __add__(self, other):
+        return Result(
+            passed=self.passed + other.passed,
+            skipped=self.skipped + other.skipped,
+            failed=self.failed + other.failed,
+        )
+
+    def __str__(self):
+        return f"\x1b[32m- Passed: {self.passed}\x1b[0m\n\x1b[33m- Skipped: {self.skipped}\x1b[0m\n\x1b[31m- Failed: {self.failed}\x1b[0m"
 
 
 @dataclass
@@ -145,9 +157,6 @@ class Test:
 
     def __init__(self, interpreter: Interpreter, filter_path: PurePath | None):
         self.interpreter = interpreter
-        self.failed: int = 0
-        self.passed: int = 0
-        self.skipped: int = 0
         self.expectations: int = 0
         self.failures: Dict[Path, List[str]] = {}
         self.filter_path: PurePath | None = filter_path
@@ -156,6 +165,8 @@ class Test:
     def run(self) -> Result:
         tests = TESTS[self.interpreter.value.variant]
         print(f"\n>>> Running {self.interpreter.value.name} tests")
+
+        result = Result()
         for suite in tests:
             if (
                 self.filter_path is not None
@@ -166,37 +177,43 @@ class Test:
             print(f"\n- Chapter {suite.chapter.name}")
             for test in suite.tests:
                 if self.filter_path is not None and test != self.filter_path:
+                    result.skipped += 1
                     continue
 
-                if self._run_test(test):
-                    self.passed += 1
-                else:
-                    self.failed += 1
+                match self._run_test(test):
+                    case True:
+                        result.passed += 1
+                    case False:
+                        result.failed += 1
+                    case None:
+                        result.skipped += 1
 
-        return Result.PASS
+        return result
 
     def run_chapter(self, chapter: Chapter) -> Result:
         suite = self._suite_from_chapter(chapter)
+        result = Result()
+
         if suite is None:
-            print(
-                f"Could not find suite for chapter {chapter.name}, probably wrong variant"
-            )
-            return Result.SKIP
+            print(f"Can't find suite for chapter {chapter}, probably wrong variant")
+            result.skipped = 1
+            return result
 
         print(f"\n- Chapter {suite.chapter.name}")
         for test in suite.tests:
             if self.filter_path is not None and test != self.filter_path:
+                result.skipped += 1
                 continue
 
             match self._run_test(test):
                 case True:
-                    self.passed += 1
+                    result.passed += 1
                 case False:
-                    self.failed += 1
+                    result.failed += 1
                 case None:
-                    self.skipped += 1
+                    result.skipped += 1
 
-        return Result.PASS
+        return result
 
     def _run_test(self, test: Path) -> bool | None:
         expect = self._parse_test(test)
@@ -213,6 +230,7 @@ class Test:
                 case _:
                     raise TypeError("Not a Binary or Command, did you added new types?")
 
+        print(f"\trunning '{test}'")
         exec = args(self.interpreter.value)
         proc = run(exec + [str(test)], capture_output=True, text=True)
 
@@ -232,10 +250,13 @@ class Test:
             return True
         else:
             [print(f"\t- \x1b[31mFAILED\x1b[0m {f}") for f in self.failures[test]]
-            print("\t [stdout]", "~" * 67)
-            print(stdout)
-            print("\t [stderr]", "~" * 67)
-            print(stderr)
+            width = 100
+            print("┌─── [stdout]", "─" * (width - 13), sep="")
+            print(textwrap.indent(stdout.rstrip(), "│"))
+            print("├─── [stderr]", "─" * (width - 13), sep="")
+            print(textwrap.indent(stderr.rstrip(), "│"))
+            print("└", "─" * (width - 1), sep="")
+            print()
             return False
 
     def _validate(
@@ -264,12 +285,10 @@ class Test:
         line = 0
         while SYNTAX_ERROR_RE.search(lines[line]):
             line += 1
-
         # TODO: implement
 
-        pass
-
     def _validate_compile_errors(self, lines: List[str], errors: List[Tuple[int, str]]):
+        # TODO: implement
         pass
 
     def _validate_output(
@@ -311,7 +330,6 @@ class Test:
 
         to_var = lambda lang: Variant.TREE_WALK if lang == "java" else Variant.BYTECODE
 
-        print(f"\trunning '{test}'")
         with open(test, "r") as file:
             for i, line in enumerate(file, 1):
                 if match := OUTPUT_EXPECT.search(line):
@@ -390,18 +408,20 @@ def main() -> int:
         else:
             return test.run()
 
+    result = Result()
     if args.interpreter == "all":
-        failed = 0
         for interpreter in Interpreter:
             test = Test(interpreter, filter)
-            if not run(test):
-                failed += 1
-        return 1 if failed > 0 else 0
+            result += run(test)
     else:
         interpreter = Interpreter[args.interpreter.upper()]
         test = Test(interpreter, filter)
-        run(test)
-        return 1 if test.failed > 0 else 0
+        result = run(test)
+
+    print("\n>>> Summary")
+    print(result)
+
+    return 1 if result.failed > 0 else 0
 
 
 # -----------------------------------------------------------------------------
