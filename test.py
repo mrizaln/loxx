@@ -188,18 +188,21 @@ class Test:
             if self.filter_path is not None and test != self.filter_path:
                 continue
 
-            if self._run_test(test):
-                self.passed += 1
-            else:
-                self.failed += 1
+            match self._run_test(test):
+                case True:
+                    self.passed += 1
+                case False:
+                    self.failed += 1
+                case None:
+                    self.skipped += 1
 
         return Result.PASS
 
-    def _run_test(self, test: Path):
+    def _run_test(self, test: Path) -> bool | None:
         expect = self._parse_test(test)
         if expect is None:
             print(f"\t- 'test' is not a test file, skipping")
-            return
+            return None
 
         def args(exe: Exe):
             match exe:
@@ -217,19 +220,30 @@ class Test:
         stderr = proc.stderr
         returncode = proc.returncode
 
-        # print(f"expectations: {expect}")
-        print(stdout)
-        print("-" * 80)
-        # print(f"stderr: {stderr}")
+        # panic!
+        if returncode == 101:
+            print(stderr)
+            print("=" * 80)
+            print("...")
+            return False
 
-        return
+        if self._validate(test, expect, stdout, stderr, returncode):
+            print(f"\t- \x1b[32mPASSED\x1b[0m")
+            return True
+        else:
+            [print(f"\t- \x1b[31mFAILED\x1b[0m {f}") for f in self.failures[test]]
+            print("\t [stdout]", "~" * 67)
+            print(stdout)
+            print("\t [stderr]", "~" * 67)
+            print(stderr)
+            return False
 
-        self._validate(test, expect, output, error)
-
-    def _validate(self, test: Path, expect: Expect, output: str, error: str):
+    def _validate(
+        self, test: Path, expect: Expect, output: str, error: str, returncode: int
+    ) -> bool:
         if expect.compile_error and expect.runtime_error:
             self._fail(test, "Test error: can't expect both compile and runtime errors")
-            return
+            return False
 
         errlines = error.split("\n")
 
@@ -238,7 +252,11 @@ class Test:
             self._validate_runtime_error(errlines, expect.runtime_error)
         else:
             self._validate_compile_errors(errlines, expect.compile_error)
-        pass
+
+        if not self._validate_return_code(test, expect.exit_code, returncode):
+            return False
+
+        return self._validate_output(test, expect.output, output)
 
     def _validate_runtime_error(self, lines: List[str], error: Tuple[int, str]):
         # Skip any compile errors. This can happen if there is a compile error in
@@ -254,8 +272,34 @@ class Test:
     def _validate_compile_errors(self, lines: List[str], errors: List[Tuple[int, str]]):
         pass
 
+    def _validate_output(
+        self, test: Path, expect: List[Tuple[int, str]], real: str
+    ) -> bool:
+        success = True
+        lines = real.splitlines()
+
+        if (e := len(expect)) != (r := len(real)):
+            self._fail(test, f"Got differing output length: expect '{e}', got '{r}'")
+
+        for (_, e), r in zip(expect, lines):
+            if e != r:
+                success = False
+                self._fail(test, f"Expected '{e}', got '{r}'")
+
+        return success
+
+    def _validate_return_code(self, test: Path, expect: int, real: int) -> bool:
+        if expect != real:
+            self._fail(test, f"Expected exit code '{expect}', got '{real}'")
+            return False
+
+        return True
+
     def _fail(self, test: Path, message: str):
-        self.failures[test].append(message)
+        if test not in self.failures:
+            self.failures[test] = [message]
+        else:
+            self.failures[test].append(message)
 
     def _parse_test(self, test: Path) -> Expect | None:
         exit_code: int = 0
