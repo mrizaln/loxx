@@ -90,16 +90,15 @@ impl<'a> Parser<'a> {
                 Ok(stmt) => program.statements.push(stmt),
                 Err(err) => match err {
                     ParseError::EndOfFile(_) => break,
-                    ParseError::SyntaxError(err) => {
-                        // tentative
-                        errors.push(err);
-                        return Err(errors);
-                    }
+                    ParseError::SyntaxError(err) => errors.push(err),
                 },
             }
         }
 
-        Ok(program)
+        match errors.is_empty() {
+            true => Ok(program),
+            false => Err(errors),
+        }
     }
 
     fn synchronize(&mut self) {
