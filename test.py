@@ -8,12 +8,13 @@ from contextlib import chdir
 from dataclasses import dataclass
 from enum import Enum
 from os.path import realpath, dirname
-from pathlib import Path, PurePath
+from pathlib import Path
 import sys
 from typing import Dict, List, Tuple
 from subprocess import run
 import re
 import textwrap
+import fnmatch
 
 DIR = Path(dirname(realpath(__file__)))
 
@@ -59,6 +60,16 @@ class Exe:
 class Interpreter(Enum):
     LOXI = Exe("loxi", Variant.TREE_WALK, Binary(DIR / "target" / "debug" / "loxi"))
     LOXII = Exe("loxii", Variant.BYTECODE, Binary(DIR / "target" / "debug" / "loxii"))
+
+
+@dataclass
+class Filter:
+    pat: re.Pattern
+    invert: bool
+
+    def match(self, path: Path) -> bool:
+        match = self.pat.match(str(path.relative_to(DIR))) is not None
+        return not match if self.invert else match
 
 
 @dataclass
@@ -155,11 +166,11 @@ class Test:
         compile_error: List[Tuple[int, str]]
         runtime_error: Tuple[int, str] | None
 
-    def __init__(self, interpreter: Interpreter, filter_path: PurePath | None):
+    def __init__(self, interpreter: Interpreter, filter_path: Filter | None):
         self.interpreter = interpreter
         self.expectations: int = 0
         self.failures: Dict[Path, List[str]] = {}
-        self.filter_path: PurePath | None = filter_path
+        self.filter: Filter | None = filter_path
         pass
 
     def run(self) -> Result:
@@ -168,15 +179,15 @@ class Test:
 
         result = Result()
         for suite in tests:
-            if (
-                self.filter_path is not None
-                and suite.chapter.name != self.filter_path.name
-            ):
-                continue
-
             print(f"\n- Chapter {suite.chapter.name}")
+            match suite.chapter:
+                case Chapter.SCANNING | Chapter.PARSING | Chapter.EVALUATING:
+                    print(f"\t- SKIPPED (can only be ran individually)")
+                    result.skipped += 1
+                    continue
+
             for test in suite.tests:
-                if self.filter_path is not None and test != self.filter_path:
+                if self.filter is not None and not self.filter.match(test):
                     result.skipped += 1
                     continue
 
@@ -201,7 +212,7 @@ class Test:
 
         print(f"\n- Chapter {suite.chapter.name}")
         for test in suite.tests:
-            if self.filter_path is not None and test != self.filter_path:
+            if self.filter is not None and not self.filter.match(test):
                 result.skipped += 1
                 continue
 
@@ -373,14 +384,15 @@ def main() -> int:
     interpreters = [e.value.name for e in Interpreter] + ["all"]
 
     parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
+
     parser.add_argument(
         "interpreter",
-        help=f"Choose which version of the interpreter to run: {interpreters}",
+        help=f"Choose which version of the interpreter to run:\n- "
+        + "\n- ".join(interpreters),
         choices=interpreters,
         metavar="interpreter",
         default=None,
     )
-    parser.add_argument("-f", help="Filter the tests", nargs="?")
     parser.add_argument(
         "-c",
         help="Run tests for a specific chapter:\n- "
@@ -391,13 +403,37 @@ def main() -> int:
         choices=[c.name.lower() for c in Chapter],
     )
 
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "-f",
+        help="Filter test files by unix shell globbing pattern",
+        nargs="?",
+        metavar="glob",
+        default=None,
+    )
+    group.add_argument(
+        "-e",
+        help="Exclude test files by unix shell globbing pattern",
+        nargs="?",
+        metavar="glob",
+        default=None,
+    )
+
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         return 1
 
     args = parser.parse_args()
-    filter = None if args.f is None else Path(args.f)
     chapter = args.c
+
+    filter = None
+    match (args.f, args.e):
+        case (None, None):
+            pass
+        case (f, None):
+            filter = Filter(re.compile(fnmatch.translate(f)), False)
+        case (None, e):
+            filter = Filter(re.compile(fnmatch.translate(e)), True)
 
     # populate the test cases, this is required
     populate_tests()
