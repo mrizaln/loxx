@@ -79,13 +79,13 @@ impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::Expr { expr } => Display::fmt(&expr, f),
-            Stmt::Print { expr, .. } => write!(f, "('print' {expr})"),
+            Stmt::Print { expr, .. } => write!(f, "(print {expr})"),
             Stmt::Var { name, init, .. } => match init {
-                Some(val) => write!(f, "('var' {name} {val})"),
-                None => write!(f, "('var' {name} nil)"),
+                Some(val) => write!(f, "(var {name} {val})"),
+                None => write!(f, "(var {name} nil)"),
             },
             Stmt::Block { statements } => {
-                write!(f, "('block'")?;
+                write!(f, "(block")?;
                 for stmt in statements {
                     write!(f, " {}", stmt)?;
                 }
@@ -99,12 +99,18 @@ impl Debug for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::Expr { expr } => Debug::fmt(&expr, f),
-            Stmt::Print { loc, expr } => write!(f, "('print'{loc} {expr})"),
+            Stmt::Print { loc, expr } => write!(f, "(print{loc} {expr:?})"),
             Stmt::Var { loc, name, init } => match init {
-                Some(val) => write!(f, "('var'{loc} {name} {val})"),
-                None => write!(f, "('var'{loc} {name} nil)"),
+                Some(val) => write!(f, "(var{loc} {name} {val:?})"),
+                None => write!(f, "(var{loc} {name} nil)"),
             },
-            Stmt::Block { statements: _ } => todo!(),
+            Stmt::Block { statements } => {
+                write!(f, "(block")?;
+                for stmt in statements {
+                    write!(f, " {:?}", stmt)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }

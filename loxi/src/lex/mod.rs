@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::iter::Peekable;
 use std::str::CharIndices;
 use thiserror::Error;
@@ -10,7 +10,7 @@ use macros::tok;
 mod test;
 pub mod token;
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, PartialEq, PartialOrd)]
 pub enum Token {
     Punctuation(TokLoc<token::Punctuation>),
     Operator(TokLoc<token::Operator>),
@@ -32,10 +32,10 @@ impl Token {
 
     pub fn static_str(&self) -> &'static str {
         match self {
-            Token::Punctuation(TokLoc { ref tok, .. }) => tok.into(),
-            Token::Operator(TokLoc { ref tok, .. }) => tok.into(),
-            Token::Keyword(TokLoc { ref tok, .. }) => tok.into(),
-            Token::Literal(TokLoc { ref tok, .. }) => match tok {
+            Token::Punctuation(TokLoc { tok, .. }) => tok.into(),
+            Token::Operator(TokLoc { tok, .. }) => tok.into(),
+            Token::Keyword(TokLoc { tok, .. }) => tok.into(),
+            Token::Literal(TokLoc { tok, .. }) => match tok {
                 token::Literal::String(_) => "<string>",
                 token::Literal::Identifier(_) => "<identifier>",
                 token::Literal::Number(_) => "<number>",
@@ -45,7 +45,7 @@ impl Token {
     }
 }
 
-impl Display for Token {
+impl Debug for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Punctuation(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
@@ -53,6 +53,33 @@ impl Display for Token {
             Token::Keyword(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
             Token::Literal(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
             Token::Eof(loc) => write!(f, "Tok {}: EOF", loc),
+        }
+    }
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Literal(tokl) => {
+                let name: &str = self.static_str();
+                let value: String = (&tokl.tok).into();
+                write!(f, r#"{} Tok{{ "{}": "{}" }}"#, tokl.loc, name, value)
+            }
+            Token::Punctuation(tokl) => {
+                let name: &str = (&tokl.tok).into();
+                write!(f, r#"{} Tok{{ "<punctuation>": "{}" }}"#, tokl.loc, name)
+            }
+            Token::Operator(tokl) => {
+                let name: &str = (&tokl.tok).into();
+                write!(f, r#"{} Tok{{ "<operator>": "{}" }}"#, tokl.loc, name)
+            }
+            Token::Keyword(tokl) => {
+                let name: &str = (&tokl.tok).into();
+                write!(f, r#"{} Tok{{ "<keyword>": "{}" }}"#, tokl.loc, name)
+            }
+            Token::Eof(loc) => {
+                write!(f, r#"{0} Tok{{ "{1}": "{1}" }}"#, loc, "<eof>")
+            }
         }
     }
 }

@@ -15,7 +15,7 @@ impl Into<String> for &Literal {
     fn into(self) -> String {
         match self {
             Literal::Number(num) => format!("{num}"),
-            Literal::String(str) => str.clone(),
+            Literal::String(str) => format!(r#""{str}""#),
             Literal::True => "true".into(),
             Literal::False => "false".into(),
             Literal::Nil => "nil".into(),

@@ -38,7 +38,15 @@ pub enum LoxError {
     EmptyError,
 }
 
-pub fn run(program: &str) -> Result<(), LoxError> {
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum RunMode {
+    Normal,
+    DumpLex,
+    DumpParse,
+}
+
+pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
+    // lexing
     let lexer = Lexer::new(program);
     let ScanResult {
         lines,
@@ -59,11 +67,19 @@ pub fn run(program: &str) -> Result<(), LoxError> {
         return Err(LoxError::LexError(errors.len()));
     }
 
+    if mode == RunMode::DumpLex {
+        for tok in tokens.iter() {
+            println!("{tok}");
+        }
+        return Ok(());
+    }
+
     // only <eof> exist
     if tokens.len() == 1 {
         return Err(LoxError::EmptyError);
     }
 
+    // parsing
     let parser = Parser::new(&tokens);
     let program = parser.parse().map_err(|err| {
         err.iter().for_each(|e| {
@@ -74,6 +90,14 @@ pub fn run(program: &str) -> Result<(), LoxError> {
         LoxError::ParseError
     })?;
 
+    if mode == RunMode::DumpParse {
+        for stmt in program.statements.iter() {
+            println!("{stmt}");
+        }
+        return Ok(());
+    }
+
+    // interpreting
     let mut interpreter = Interpreter::new();
     let _ = interpreter.interpret(program).map_err(|err| {
         print_context(&lines, err.loc());
@@ -84,7 +108,7 @@ pub fn run(program: &str) -> Result<(), LoxError> {
     Ok(())
 }
 
-pub fn run_file(path: PathBuf) -> Result<(), LoxError> {
+pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
     let contents = {
         let mut string = String::new();
         let mut file = File::open(path.clone())?;
@@ -103,10 +127,11 @@ pub fn run_file(path: PathBuf) -> Result<(), LoxError> {
         string
     };
 
-    run(&contents)?;
+    run(&contents, mode)?;
     Ok(())
 }
 
+// FIXME: current not working like a REPL
 pub fn run_prompt() -> io::Result<()> {
     println!("Loxi: a Lox programming language interpreter (currently under construction)");
 
@@ -120,7 +145,7 @@ pub fn run_prompt() -> io::Result<()> {
             _ => (),
         }
 
-        if let Err(err) = run(&line) {
+        if let Err(err) = run(&line, RunMode::Normal) {
             println!("{}", err);
         }
 

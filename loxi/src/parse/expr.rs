@@ -150,7 +150,7 @@ impl Display for ValExpr {
             }
 
             ValExpr::Grouping { expr } => {
-                format!("('group' {expr})")
+                format!("(group {expr})")
             }
         };
         write!(f, "{}", string)
@@ -178,7 +178,7 @@ impl Debug for ValExpr {
             }
 
             ValExpr::Grouping { expr } => {
-                format!("('group' {expr:?})")
+                format!("(group {expr:?})")
             }
         };
         write!(f, "{}", string)
@@ -190,7 +190,7 @@ impl Display for RefExpr {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, .. },
-            } => write!(f, "('var' {})", tok.name),
+            } => write!(f, "(var {})", tok.name),
             RefExpr::Grouping { expr } => Display::fmt(&expr, f),
             RefExpr::Assignment { var, value } => write!(f, "(= {} {})", var.tok.name, value),
         }
@@ -202,7 +202,7 @@ impl Debug for RefExpr {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
-            } => write!(f, "('var'{} {})", loc, tok.name),
+            } => write!(f, "(var{} {})", loc, tok.name),
             RefExpr::Grouping { expr } => Debug::fmt(&expr, f),
             RefExpr::Assignment { var, value } => {
                 write!(f, "(={} {} {:?})", var.loc, var.tok.name, value)
