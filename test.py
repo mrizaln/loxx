@@ -3,13 +3,18 @@
 # NOTE: This script is a python3 port of the test.dart script from
 #       https://github.com/munificent/craftinginterpreters
 
+import sys
+
+MIN_PYTHON = (3, 11)
+if sys.version_info < MIN_PYTHON:
+    sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
+
 from argparse import ArgumentParser, RawTextHelpFormatter
 from contextlib import chdir
 from dataclasses import dataclass
 from enum import Enum
 from os.path import realpath, dirname
 from pathlib import Path
-import sys
 from typing import Dict, List, Tuple
 from subprocess import run
 import re
