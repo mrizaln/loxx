@@ -1,3 +1,4 @@
+use std::cell::RefMut;
 use std::fmt::{Debug, Display};
 
 use super::token;
@@ -107,7 +108,7 @@ impl ValExpr {
 }
 
 impl RefExpr {
-    pub fn eval(self, env: &mut Environment) -> Result<&mut Value, RuntimeError> {
+    pub fn eval(self, env: &mut Environment) -> Result<RefMut<'_, Value>, RuntimeError> {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
@@ -122,7 +123,7 @@ impl RefExpr {
                 let name = var.tok.name;
                 env.get_mut(&name)
                     .ok_or(RuntimeError::UndefinedVariable(var.loc, name))
-                    .map(|v| {
+                    .map(|mut v| {
                         *v = value;
                         v
                     })
@@ -233,7 +234,7 @@ pub mod macros {
         ($xpr:expr, $env:ident) => {
             match $xpr {
                 Expr::ValExpr(expr) => expr.eval($env),
-                Expr::RefExpr(expr) => expr.eval($env).cloned(),
+                Expr::RefExpr(expr) => expr.eval($env).map(|v| v.clone()),
             }
         };
     }

@@ -1,9 +1,9 @@
 use std::fmt::{Debug, Display};
 
+use crate::interp::environment::Environment;
 use crate::interp::object::Value;
 use crate::interp::RuntimeError;
 use crate::util::Location;
-use crate::{interp::environment::Environment, parse::expr};
 
 use super::expr::{
     macros::{eval_cloned, eval_unit},
@@ -24,6 +24,9 @@ pub enum Stmt {
         name: String,
         init: Option<Expr>,
     },
+    Block {
+        statements: Vec<Stmt>,
+    },
 }
 
 impl Stmt {
@@ -36,11 +39,10 @@ impl Stmt {
                 // must be thrown from the match arms. I want the eval_ref! macro to be able to not
                 // handle the error and return it as is so user can handle it themselves. eval_unit!
                 // and eval_cloned! both do that and I want symmetry.
-                let expr = match expr {
-                    Expr::ValExpr(expr) => &mut expr.eval(env)?,
-                    Expr::RefExpr(expr) => expr.eval(env)?,
+                match expr {
+                    Expr::ValExpr(expr) => println!("{}", expr.eval(env)?),
+                    Expr::RefExpr(expr) => println!("{}", expr.eval(env)?),
                 };
-                println!("{expr}");
             }
             Stmt::Var { loc: _, name, init } => {
                 //
@@ -62,6 +64,12 @@ impl Stmt {
                 // TODO: add location metadata
                 env.define(name, value);
             }
+            Stmt::Block { statements } => {
+                let mut new_env = env.child();
+                for stmt in statements {
+                    stmt.execute(&mut new_env)?;
+                }
+            }
         };
         Ok(())
     }
@@ -76,6 +84,13 @@ impl Display for Stmt {
                 Some(val) => write!(f, "('var' {name} {val})"),
                 None => write!(f, "('var' {name} nil)"),
             },
+            Stmt::Block { statements } => {
+                write!(f, "('block'")?;
+                for stmt in statements {
+                    write!(f, " {}", stmt)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -89,6 +104,7 @@ impl Debug for Stmt {
                 Some(val) => write!(f, "('var'{loc} {name} {val})"),
                 None => write!(f, "('var'{loc} {name} nil)"),
             },
+            Stmt::Block { statements: _ } => todo!(),
         }
     }
 }

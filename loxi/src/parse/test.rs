@@ -6,24 +6,24 @@ use crate::lex::Lexer;
 use crate::parse::Parser;
 use crate::util::{Location, TokLoc};
 
-use super::{expr::*, stmt::*, token};
+use super::{expr::macros::*, expr::*, stmt::*, token};
 
 macro_rules! tokl {
     ([$loc:expr] -> $type:ident::$var:ident) => {
-        Expr::$type {
+        val_expr!($type {
             value: TokLoc {
                 tok: token::$type::$var,
                 loc: $loc,
             },
-        }
+        })
     };
     ([$loc:expr] -> $type:ident::$var:ident = $value:expr) => {
-        Expr::$type {
+        val_expr!($type {
             value: TokLoc {
                 tok: token::$type::$var($value),
                 loc: $loc,
             },
-        }
+        })
     };
 }
 
@@ -63,33 +63,33 @@ fn get_reference_ast() -> Expr {
         loc: loc(1, 13),
     };
 
-    let bin_min = Expr::Binary {
+    let bin_min = ValExpr::Binary {
         left: Box::new(lit2),
         operator: min,
         right: Box::new(lit3),
     };
 
-    let grp1 = Expr::Grouping {
+    let grp1 = val_expr!(Grouping {
         expr: Box::new(bin_min),
-    };
+    });
 
-    let bin_1_grp1 = Expr::Binary {
+    let bin_1_grp1 = val_expr!(Binary {
         left: Box::new(lit1),
         operator: star,
         right: Box::new(grp1),
-    };
+    });
 
-    let bin_lt = Expr::Binary {
+    let bin_lt = val_expr!(Binary {
         left: Box::new(bin_1_grp1),
         operator: lt,
         right: Box::new(lit4),
-    };
+    });
 
-    let bin_eqeq = Expr::Binary {
+    let bin_eqeq = val_expr!(Binary {
         left: Box::new(bin_lt),
         operator: eqeq,
         right: Box::new(litf),
-    };
+    });
 
     bin_eqeq
 }

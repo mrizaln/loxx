@@ -42,8 +42,9 @@ impl Interpreter {
     }
 
     pub fn interpret(&mut self, program: Program) -> Result<(), RuntimeError> {
+        let env = &mut self.environment;
         for stmt in program.statements.into_iter() {
-            stmt.execute(&mut self.environment)?
+            stmt.execute(env)?
         }
         Ok(())
     }

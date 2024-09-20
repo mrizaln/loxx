@@ -1,4 +1,3 @@
-use core::panic;
 use std::fs::File;
 use std::io::{self, stdin, stdout, Read, Write};
 use std::path::PathBuf;

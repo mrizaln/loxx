@@ -1,4 +1,3 @@
-use core::panic;
 use std::iter::Peekable;
 use std::ops::Deref;
 use std::slice::Iter;
@@ -14,7 +13,7 @@ use expr::{
 };
 use stmt::Stmt;
 
-use macros::{consume_no_eof, syntax_error};
+use macros::{consume_no_eof, is_tok, syntax_error};
 
 pub mod expr;
 pub mod stmt;
@@ -27,6 +26,7 @@ pub mod token;
 /// declaration -> var_decl | statement ;
 /// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
 /// statement   -> expr_stmt | print_stmt ;
+/// block       -> "{" declaration* "}"
 /// expr_stmt   -> expression ";" ;
 /// print_stmt  -> "print" expression ";" ;
 /// expression  -> assignment ;
@@ -39,6 +39,7 @@ pub mod token;
 /// primary     -> NUMBER | STRING | "true" | "false" | "nil" | grouping | IDENTIFIER ;
 /// grouping    -> "(" expression ")"
 
+// TODO: Add more variation of the SyntaxError
 #[derive(Debug, Error)]
 #[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
 pub struct SyntaxError {
@@ -57,6 +58,14 @@ impl ParseError {
         match self {
             ParseError::SyntaxError(SyntaxError { loc, .. }) => *loc,
             ParseError::EndOfFile(loc) => *loc,
+        }
+    }
+
+    /// Convert the variant to ParseError::SyntaxError if it is not already
+    pub fn syntax_err(self, expect: &'static str) -> Self {
+        match self {
+            ParseError::SyntaxError(_) => self,
+            ParseError::EndOfFile(loc) => syntax_error!(expect, "<eof>", loc),
         }
     }
 }
@@ -151,7 +160,7 @@ impl<'a> Parser<'a> {
 
         let init = consume_no_eof! {
             self as ["<expression>"]
-            if   lex::Token::Operator(TokLoc { tok: ltok::Operator::Equal, .. }),
+            if   is_tok!(Operator::Equal),
             then {
                 self.advance();
                 Some(*(self.expression())?)
@@ -161,7 +170,7 @@ impl<'a> Parser<'a> {
 
         consume_no_eof! {
             self as [";"]
-            if   lex::Token::Punctuation(TokLoc { tok: ltok::Punctuation::Semicolon, .. }),
+            if   is_tok!(Punctuation::Semicolon),
             then self.advance(),
         }?;
 
@@ -170,33 +179,51 @@ impl<'a> Parser<'a> {
 
     fn statement(&mut self) -> StmtResult {
         match self.peek()? {
-            lex::Token::Keyword(TokLoc {
-                tok: ltok::Keyword::Print,
-                ..
-            }) => {
+            is_tok!(Keyword::Print) => {
                 let loc = self.advance().unwrap().loc();
                 let expr = match self.expression_statement() {
-                    Ok(Stmt::Expr { expr }) => expr,
+                    Ok(Stmt::Expr { expr }) => Ok(expr),
                     Ok(_) => unreachable!(),
                     Err(ParseError::EndOfFile(loc)) => {
-                        return Err(syntax_error!("<expression>", "<eof", loc))
+                        Err(syntax_error!("<expression>", "<eof", loc))
                     }
-                    Err(err) => return Err(err),
-                };
+                    Err(err) => Err(err),
+                }?;
                 Ok(Stmt::Print { loc, expr })
+            }
+            is_tok!(Punctuation::BraceLeft) => {
+                let loc = self.advance().unwrap().loc();
+                self.block(loc)
             }
             _ => self.expression_statement(),
         }
+    }
+
+    fn block(&mut self, _start: Location) -> StmtResult {
+        let mut statements = Vec::new();
+
+        loop {
+            match self.peek().map_err(|e| e.syntax_err("<statement>"))? {
+                is_tok!(Punctuation::BraceRight) => break,
+                _ => statements.push(self.declaration()?),
+            }
+        }
+
+        // TODO: tell the location of the starting brace on the error message
+        consume_no_eof! {
+            self as ["}"]
+            if   is_tok!(Punctuation::BraceRight),
+            then self.advance(),
+        }?;
+
+        Ok(Stmt::Block { statements })
     }
 
     fn expression_statement(&mut self) -> StmtResult {
         let expr = self.expression()?;
 
         match self.peek()? {
-            lex::Token::Punctuation(TokLoc {
-                tok: ltok::Punctuation::Semicolon,
-                loc: _,
-            }) => {
+            is_tok!(Punctuation::Semicolon) => {
                 self.advance();
                 return Ok(Stmt::Expr { expr: *expr });
             }
@@ -224,10 +251,7 @@ impl<'a> Parser<'a> {
             expr = Box::new(val_expr!(Binary {
                 left: expr,
                 operator: op,
-                right: inner(self).map_err(|err| match err {
-                    ParseError::EndOfFile(loc) => syntax_error!("<expression>", "<eof>", loc),
-                    _ => err,
-                })?,
+                right: inner(self).map_err(|err| err.syntax_err("<expression>"))?,
             }));
         }
 
@@ -238,10 +262,7 @@ impl<'a> Parser<'a> {
         let expr = self.equality()?;
 
         match self.peek()? {
-            lex::Token::Operator(TokLoc {
-                tok: ltok::Operator::Equal,
-                ..
-            }) => {
+            is_tok!(Operator::Equal) => {
                 let loc = self.advance().unwrap().loc();
                 let value = self.assignment()?;
 
@@ -316,7 +337,7 @@ impl<'a> Parser<'a> {
                     match self.peek()? {
                         lex::Token::Punctuation(TokLoc {
                             tok: ltok::Punctuation::ParenRight,
-                            loc: _,
+                            ..
                         }) => {
                             self.advance();
                             return Ok(Box::new(group_expr!(*expr)));
@@ -466,6 +487,16 @@ mod macros {
         };
     }
 
+    macro_rules! ltokl {
+        ($type:ident::$name:ident) => {
+            lex::Token::$type(TokLoc {
+                tok: ltok::$type::$name,
+                ..
+            })
+        };
+    }
+
     pub(crate) use consume_no_eof;
+    pub(crate) use ltokl as is_tok;
     pub(crate) use syntax_error;
 }
