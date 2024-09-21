@@ -13,7 +13,7 @@ use expr::{
 };
 use stmt::Stmt;
 
-use macros::{consume_no_eof, is_tok, syntax_error};
+use macros::{is_tok, peek_no_eof, peek_ok_eof, syntax_error};
 
 pub mod expr;
 pub mod stmt;
@@ -48,6 +48,7 @@ pub struct SyntaxError {
     pub loc: Location,
 }
 
+#[derive(Debug)]
 pub enum ParseError {
     SyntaxError(SyntaxError),
     EndOfFile(Location),
@@ -113,20 +114,20 @@ impl<'a> Parser<'a> {
     }
 
     fn synchronize(&mut self) {
+        // discard anything that previously produces error
+        self.advance();
+
         while let Ok(tok) = self.peek() {
             match tok {
-                lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
-                    ltok::Keyword::Class => break,
-                    ltok::Keyword::If => break,
-                    ltok::Keyword::Else => break,
-                    ltok::Keyword::For => break,
-                    ltok::Keyword::While => break,
-                    ltok::Keyword::Fun => break,
-                    ltok::Keyword::Print => break,
-                    ltok::Keyword::Return => break,
-                    ltok::Keyword::Var => break,
-                    _ => (),
-                },
+                is_tok!(Keyword::Class) => break,
+                is_tok!(Keyword::If) => break,
+                is_tok!(Keyword::Else) => break,
+                is_tok!(Keyword::For) => break,
+                is_tok!(Keyword::While) => break,
+                is_tok!(Keyword::Fun) => break,
+                is_tok!(Keyword::Print) => break,
+                is_tok!(Keyword::Return) => break,
+                is_tok!(Keyword::Var) => break,
                 _ => (),
             }
             self.advance();
@@ -135,10 +136,7 @@ impl<'a> Parser<'a> {
 
     fn declaration(&mut self) -> StmtResult {
         match self.peek()? {
-            lex::Token::Keyword(TokLoc {
-                tok: ltok::Keyword::Var,
-                ..
-            }) => {
+            is_tok!(Keyword::Var) => {
                 self.advance();
                 self.var_declaration()
             }
@@ -150,28 +148,27 @@ impl<'a> Parser<'a> {
         })
     }
 
+    // TODO: add edge case check when the variable initializer has identifier with the same name
+    //       and make it a SyntaxError
     fn var_declaration(&mut self) -> StmtResult {
-        let (name, loc) = consume_no_eof! {
-            self as ["<identifier>"]
-            if   lex::Token::Literal(TokLoc { tok: ltok::Literal::Identifier(name), loc }),
-            then (name.clone(), loc.clone()),       // TODO: move instead
+        let (name, loc) = peek_no_eof! { self as ["<identifier>"]
+            if is_tok!(Literal::Identifier(name, loc)) => (name.clone(), loc.clone()),
         }?;
-        self.advance(); // separate advance from consume! because both borrows self
+        self.advance();
 
-        let init = consume_no_eof! {
-            self as ["<expression>"]
-            if   is_tok!(Operator::Equal),
-            then {
+        let init = peek_no_eof! { self as ["; or ="]
+            if is_tok!(Operator::Equal) => {
                 self.advance();
-                Some(*(self.expression())?)
+                Some(*self.expression().map_err(|err|err.syntax_err("<expression>"))?)
             },
-            else None,
+            else tok => match tok {
+                is_tok!(Punctuation::Semicolon) => None,
+                _ => Err(syntax_error!("; or =", tok.static_str(), tok.loc()))?,
+            },
         }?;
 
-        consume_no_eof! {
-            self as [";"]
-            if   is_tok!(Punctuation::Semicolon),
-            then self.advance(),
+        let _ = peek_no_eof! { self as [";"]
+            if is_tok!(Punctuation::Semicolon) => self.advance(),
         }?;
 
         Ok(Stmt::Var { loc, name, init })
@@ -182,12 +179,9 @@ impl<'a> Parser<'a> {
             is_tok!(Keyword::Print) => {
                 let loc = self.advance().unwrap().loc();
                 let expr = match self.expression_statement() {
+                    Err(err) => Err(err.syntax_err("<expression>")),
                     Ok(Stmt::Expr { expr }) => Ok(expr),
                     Ok(_) => unreachable!(),
-                    Err(ParseError::EndOfFile(loc)) => {
-                        Err(syntax_error!("<expression>", "<eof", loc))
-                    }
-                    Err(err) => Err(err),
                 }?;
                 Ok(Stmt::Print { loc, expr })
             }
@@ -210,10 +204,8 @@ impl<'a> Parser<'a> {
         }
 
         // TODO: tell the location of the starting brace on the error message
-        consume_no_eof! {
-            self as ["}"]
-            if   is_tok!(Punctuation::BraceRight),
-            then self.advance(),
+        let _ = peek_no_eof! { self as ["}"]
+            if is_tok!(Punctuation::BraceRight) => self.advance(),
         }?;
 
         Ok(Stmt::Block { statements })
@@ -222,17 +214,11 @@ impl<'a> Parser<'a> {
     fn expression_statement(&mut self) -> StmtResult {
         let expr = self.expression()?;
 
-        match self.peek()? {
-            is_tok!(Punctuation::Semicolon) => {
-                self.advance();
-                return Ok(Stmt::Expr { expr: *expr });
-            }
-            tok => Err(syntax_error!(
-                (&ltok::Punctuation::Semicolon).into(),
-                tok.static_str(),
-                tok.loc()
-            )),
-        }
+        let _ = peek_ok_eof! { self as [";"]
+            if is_tok!(Punctuation::Semicolon) => self.advance(),
+        }?;
+
+        Ok(Stmt::Expr { expr: *expr })
     }
 
     fn expression(&mut self) -> ExprResult {
@@ -313,53 +299,34 @@ impl<'a> Parser<'a> {
         let curr = self.advance().expect("Unexpected end of file");
         let loc = curr.loc();
 
-        enum Lit {
-            Lit(token::Literal),
-            Var(token::Variable),
-            No(&'static str),
-        }
+        let lit = |lit| val_expr! { Literal { value: TokLoc { tok: lit, loc } } };
+        let var = |name| ref_expr! { Variable { var: TokLoc { tok: token::Variable { name: name }, loc } } };
 
-        let lit = match curr {
-            lex::Token::Keyword(TokLoc { tok, .. }) => match tok {
-                ltok::Keyword::True => Lit::Lit(token::Literal::True),
-                ltok::Keyword::False => Lit::Lit(token::Literal::False),
-                ltok::Keyword::Nil => Lit::Lit(token::Literal::Nil),
-                _ => Lit::No(tok.into()),
-            },
-            lex::Token::Literal(TokLoc { tok, .. }) => match tok {
-                ltok::Literal::String(str) => Lit::Lit(token::Literal::String(str.clone())), // TODO: move instead
-                ltok::Literal::Number(num) => Lit::Lit(token::Literal::Number(*num)),
-                ltok::Literal::Identifier(name) => Lit::Var(token::Variable { name: name.clone() }),
-            },
-            lex::Token::Punctuation(TokLoc { tok, .. }) => match tok {
-                ltok::Punctuation::ParenLeft => {
-                    let expr = self.expression()?;
-                    match self.peek()? {
-                        lex::Token::Punctuation(TokLoc {
-                            tok: ltok::Punctuation::ParenRight,
-                            ..
-                        }) => {
-                            self.advance();
-                            return Ok(Box::new(group_expr!(*expr)));
-                        }
-                        tok => Lit::No(tok.static_str()),
-                    }
-                }
-                _ => Lit::No(tok.into()),
-            },
+        type Lit = token::Literal;
+
+        let expr = match curr {
+            is_tok!(Keyword::True) => lit(Lit::True),
+            is_tok!(Keyword::False) => lit(Lit::False),
+            is_tok!(Keyword::Nil) => lit(Lit::Nil),
+
+            is_tok!(Literal::String(str, _)) => lit(Lit::String(str.clone())),
+            is_tok!(Literal::Number(num, _)) => lit(Lit::Number(*num)),
+            is_tok!(Literal::Identifier(name, _)) => var(name.clone()),
+
+            is_tok!(Punctuation::ParenLeft) => {
+                let expr = self.expression()?;
+                // TODO: tell the location of the starting brace on the error message
+                let _ = peek_no_eof! { self as [")"]
+                    if is_tok!(Punctuation::ParenRight) => self.advance(),
+                }?;
+                group_expr!(*expr)
+            }
+
             lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
-            _ => Lit::No(curr.static_str()),
+            _ => return Err(syntax_error!("<expression", curr.static_str(), loc)),
         };
 
-        match lit {
-            Lit::Lit(lit) => Ok(Box::new(val_expr!(Literal {
-                value: TokLoc { tok: lit, loc },
-            }))),
-            Lit::Var(var) => Ok(Box::new(ref_expr!(Variable {
-                var: TokLoc { tok: var, loc },
-            }))),
-            Lit::No(str) => Err(syntax_error!("<expression>", str, loc)),
-        }
+        Ok(Box::new(expr))
     }
 
     fn peek(&mut self) -> Result<&lex::Token, ParseError> {
@@ -380,11 +347,8 @@ mod conv {
 
     pub fn to_equality(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
-            lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                ltok::Operator::BangEqual => token::BinaryOp::NotEqual,
-                ltok::Operator::EqualEqual => token::BinaryOp::Equal,
-                _ => return None,
-            },
+            is_tok!(Operator::BangEqual) => token::BinaryOp::NotEqual,
+            is_tok!(Operator::EqualEqual) => token::BinaryOp::Equal,
             _ => return None,
         };
 
@@ -396,13 +360,10 @@ mod conv {
 
     pub fn to_comparison(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
-            lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                ltok::Operator::Greater => token::BinaryOp::Greater,
-                ltok::Operator::GreaterEqual => token::BinaryOp::GreaterEq,
-                ltok::Operator::Less => token::BinaryOp::Less,
-                ltok::Operator::LessEqual => token::BinaryOp::LessEq,
-                _ => return None,
-            },
+            is_tok!(Operator::Greater) => token::BinaryOp::Greater,
+            is_tok!(Operator::GreaterEqual) => token::BinaryOp::GreaterEq,
+            is_tok!(Operator::Less) => token::BinaryOp::Less,
+            is_tok!(Operator::LessEqual) => token::BinaryOp::LessEq,
             _ => return None,
         };
         Some(TokLoc {
@@ -413,11 +374,8 @@ mod conv {
 
     pub fn to_term(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
-            lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                ltok::Operator::Plus => token::BinaryOp::Add,
-                ltok::Operator::Minus => token::BinaryOp::Sub,
-                _ => return None,
-            },
+            is_tok!(Operator::Plus) => token::BinaryOp::Add,
+            is_tok!(Operator::Minus) => token::BinaryOp::Sub,
             _ => return None,
         };
         Some(TokLoc {
@@ -428,11 +386,8 @@ mod conv {
 
     pub fn to_factor(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
-            lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                ltok::Operator::Star => token::BinaryOp::Mul,
-                ltok::Operator::Slash => token::BinaryOp::Div,
-                _ => return None,
-            },
+            is_tok!(Operator::Star) => token::BinaryOp::Mul,
+            is_tok!(Operator::Slash) => token::BinaryOp::Div,
             _ => return None,
         };
         Some(TokLoc {
@@ -443,11 +398,8 @@ mod conv {
 
     pub fn to_unary(tok: &lex::Token) -> Option<TokLoc<token::UnaryOp>> {
         let new_tok = match tok {
-            lex::Token::Operator(TokLoc { tok, .. }) => match tok {
-                ltok::Operator::Bang => token::UnaryOp::Not,
-                ltok::Operator::Minus => token::UnaryOp::Minus,
-                _ => return None,
-            },
+            is_tok!(Operator::Bang) => token::UnaryOp::Not,
+            is_tok!(Operator::Minus) => token::UnaryOp::Minus,
             _ => return None,
         };
         Some(TokLoc {
@@ -458,6 +410,7 @@ mod conv {
 }
 
 mod macros {
+    /// convenience macro for creating a `ParseError::SyntaxError`
     macro_rules! syntax_error {
         ($expect:expr, $real:expr, $loc:expr) => {
             ParseError::SyntaxError(SyntaxError {
@@ -468,25 +421,38 @@ mod macros {
         };
     }
 
-    macro_rules! consume_no_eof {
-        ($self:ident as [$name:expr] if $tok:pat, then $xpr:expr,) => {
+    /// peek `$self` for the next token, if it is not the expected token (`$tok`) or the end of
+    /// file, return a `ParseError::SyntaxError`
+    macro_rules! peek_no_eof {
+        ($self:ident as [$name:expr] if $tok:pat => $xpr:expr,) => {
             match $self.peek() {
                 Ok($tok) => Ok($xpr),
                 Ok(tok) => Err(syntax_error!($name, tok.static_str(), tok.loc())),
-                Err(ParseError::EndOfFile(loc)) => Err(syntax_error!($name, "<eof>", loc)),
-                Err(err) => Err(err),
+                Err(err) => Err(err.syntax_err($name)),
             }
         };
-        ($self:ident as [$name:expr] if $tok:pat, then $xpr1:expr, else $xpr2:expr,) => {
+        ($self:ident as [$name:expr] if $tok:pat => $xpr1:expr, else $other:ident => $xpr2:expr,) => {
             match $self.peek() {
                 Ok($tok) => Ok($xpr1),
-                Ok(_) => Ok($xpr2),
-                Err(ParseError::EndOfFile(loc)) => Err(syntax_error!($name, "<eof>", loc)),
-                Err(err) => Err(err),
+                Ok($other) => Ok($xpr2),
+                Err(err) => Err(err.syntax_err($name)),
             }
         };
     }
 
+    /// peek `$self` for the next token, if it is not the expected token return a
+    /// `ParseError::SyntaxError`
+    macro_rules! peek_ok_eof {
+        ($self:ident as [$name:expr] if $tok:pat => $xpr:expr,) => {
+            match $self.peek() {
+                Ok($tok) => Ok($xpr),
+                Ok(tok) => Err(syntax_error!($name, tok.static_str(), tok.loc())),
+                Err(err) => Err(err.syntax_err($name)),
+            }
+        };
+    }
+
+    /// convenience macro for creating a `lex::Token::$name(TokLoc { tok: ltok::$name::$tok, .. })`
     macro_rules! ltokl {
         ($type:ident::$name:ident) => {
             lex::Token::$type(TokLoc {
@@ -494,9 +460,16 @@ mod macros {
                 ..
             })
         };
+        ($type:ident::$name:ident($tok:tt, $loc:tt)) => {
+            lex::Token::$type(TokLoc {
+                tok: ltok::$type::$name($tok),
+                loc: $loc,
+            })
+        };
     }
 
-    pub(crate) use consume_no_eof;
     pub(crate) use ltokl as is_tok;
+    pub(crate) use peek_no_eof;
+    pub(crate) use peek_ok_eof;
     pub(crate) use syntax_error;
 }
