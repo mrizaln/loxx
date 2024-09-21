@@ -99,7 +99,7 @@ fn print_expr_tree() {
     let expr = get_reference_ast();
     println!("{expr}");
 
-    let result = "(== (< (* 1 ('group' (- 2 3))) 4) false)";
+    let result = "(== (< (* 1 (group (- 2 3))) 4) false)";
     assert_eq!(result, format!("{expr}"))
 }
 
@@ -110,8 +110,8 @@ fn parse_to_a_correct_ast() {
 
     assert!(result.errors.is_empty());
 
-    let parser = Parser::new(&result.tokens);
-    let expr = parser.parse();
+    let mut parser = Parser::new();
+    let expr = parser.parse(result.tokens);
 
     assert!(matches!(expr, Ok(_)));
 

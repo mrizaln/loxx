@@ -1,7 +1,4 @@
-use std::iter::Peekable;
-use std::ops::Deref;
-use std::slice::Iter;
-
+use std::collections::VecDeque;
 use thiserror::Error;
 
 use crate::lex::{self, token as ltok};
@@ -13,7 +10,7 @@ use expr::{
 };
 use stmt::Stmt;
 
-use macros::{is_tok, missing_delim, peek_no_eof, peek_ok_eof, syntax_error};
+use macros::{is_tok, missing_delim, peek_no_eof, syntax_error};
 
 pub mod expr;
 pub mod stmt;
@@ -90,9 +87,10 @@ impl ParseError {
     }
 }
 
-pub struct Parser<'a> {
-    tokens: Peekable<Iter<'a, lex::Token>>,
-    eof: Location,
+pub struct Parser {
+    tokens: VecDeque<lex::Token>,
+    errors: Vec<SyntaxError>,
+    current: Option<lex::Token>,
 }
 
 pub struct Program {
@@ -102,33 +100,30 @@ pub struct Program {
 pub type ExprResult = Result<Box<Expr>, ParseError>;
 pub type StmtResult = Result<Stmt, ParseError>;
 
-impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a [lex::Token]) -> Self {
+impl Parser {
+    pub fn new() -> Self {
         Self {
-            tokens: tokens.iter().peekable(),
-            eof: tokens.last().expect("The slice must not be empty").loc(),
+            tokens: VecDeque::new(),
+            errors: Vec::new(),
+            current: None,
         }
     }
 
-    pub fn parse(mut self) -> Result<Program, Vec<SyntaxError>> {
+    pub fn parse(&mut self, tokens: Vec<lex::Token>) -> Result<Program, Vec<SyntaxError>> {
+        self.tokens = VecDeque::from(tokens);
+
         let mut program = Program {
             statements: Vec::new(),
         };
-        let mut errors = Vec::new();
 
-        loop {
-            match self.declaration() {
-                Ok(stmt) => program.statements.push(stmt),
-                Err(err) => match err {
-                    ParseError::EndOfFile(_) => break,
-                    ParseError::SyntaxError(err) => errors.push(err),
-                },
-            }
+        while let Some(stmt) = self.declaration() {
+            program.statements.push(stmt);
         }
 
-        match errors.is_empty() {
-            true => Ok(program),
-            false => Err(errors),
+        if self.errors.is_empty() {
+            Ok(program)
+        } else {
+            Err(std::mem::take(&mut self.errors))
         }
     }
 
@@ -153,20 +148,36 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn declaration(&mut self) -> StmtResult {
-        match self.peek()? {
-            is_tok!(Keyword::Var) => {
-                self.advance();
-                self.var_declaration()
+    /// this function only returns Err when it reaches EOF
+    fn declaration(&mut self) -> Option<Stmt> {
+        if let Ok(tok) = self.peek() {
+            let stmt = match tok {
+                is_tok!(Keyword::Var) => {
+                    self.advance();
+                    self.var_declaration()
+                }
+                _ => self.statement(),
+            };
+            match stmt {
+                Ok(stmt) => Some(stmt),
+                Err(err) => {
+                    match err {
+                        ParseError::SyntaxError(err) => self.errors.push(err),
+                        ParseError::EndOfFile(_) => (),
+                    };
+                    self.synchronize();
+                    None
+                }
             }
-            _ => self.statement(),
+        } else {
+            None
         }
-        .inspect_err(|_| self.synchronize())
     }
 
-    // TODO: add edge case check when the variable initializer has identifier with the same name
-    //       and make it a SyntaxError
     fn var_declaration(&mut self) -> StmtResult {
+        // TODO: add edge case check when the variable initializer has identifier with the same name
+        //       and make it a SyntaxError
+
         let (name, loc) = peek_no_eof! { self as ["<identifier>"]
             if is_tok!(Literal::Identifier(name, loc)) => (name.clone(), loc.clone()),
         }?;
@@ -215,26 +226,30 @@ impl<'a> Parser<'a> {
     fn block(&mut self, start: Location) -> StmtResult {
         let mut statements = Vec::new();
 
-        // this loop can only stop if SyntaxError occured or BraceRight encountered
-        let _ = loop {
-            match self.peek().map_err(|e| e.missing_delim("}", start))? {
-                is_tok!(Punctuation::BraceRight) => break self.advance(),
-                _ => statements.push(self.declaration()?),
+        // this loop can only stop if EndOfFile or BraceRight encountered
+        while let Ok(tok) = self.peek() {
+            match tok {
+                is_tok!(Punctuation::BraceRight) => break,
+                _ => match self.declaration() {
+                    Some(decl) => statements.push(decl),
+                    None => continue,
+                },
             }
-        };
+        }
 
-        Ok(Stmt::Block { statements })
+        if let Ok(is_tok!(Punctuation::BraceRight)) = self.peek() {
+            self.advance();
+            Ok(Stmt::Block { statements })
+        } else {
+            Err(missing_delim!("}", start))
+        }
     }
 
     fn expression_statement(&mut self) -> StmtResult {
         let expr = self.expression().map_err(|e| e.syntax_err(";"))?;
         let _ = peek_no_eof! { self as [";"]
             if is_tok!(Punctuation::Semicolon) => self.advance(),
-        }
-        .inspect_err(|e| match e {
-            ParseError::SyntaxError(err) => println!("{err:?}"),
-            ParseError::EndOfFile(loc) => println!("<eof> at {loc}"),
-        })?;
+        }?;
         Ok(Stmt::Expr { expr: *expr })
     }
 
@@ -347,15 +362,17 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&mut self) -> Result<&lex::Token, ParseError> {
-        match self.tokens.peek().map(&Deref::deref) {
-            Some(lex::Token::Eof(_)) => Err(ParseError::EndOfFile(self.eof)),
-            None => Err(ParseError::EndOfFile(self.eof)),
+        match self.tokens.front() {
+            // out of bound read is considered as EOF at invalid location [0:0]
+            None => Err(ParseError::EndOfFile(Location::default())),
+            Some(lex::Token::Eof(loc)) => Err(ParseError::EndOfFile(*loc)),
             Some(tok) => Ok(tok),
         }
     }
 
     fn advance(&mut self) -> Option<&lex::Token> {
-        self.tokens.next()
+        self.current = self.tokens.pop_front();
+        self.current.as_ref()
     }
 }
 
@@ -466,25 +483,6 @@ mod macros {
         };
     }
 
-    /// peek `$self` for the next token, if it is not the expected token return a
-    /// `ParseError::SyntaxError`
-    macro_rules! peek_ok_eof {
-        ($self:ident as [$name:expr] if $tok:pat => $xpr:expr,) => {
-            match $self.peek() {
-                Ok($tok) => Ok($xpr),
-                Ok(tok) => Err(syntax_error!($name, tok.static_str(), tok.loc())),
-                Err(err) => Err(err),
-            }
-        };
-        ($self:ident as [$name:expr] if $tok:pat => $xpr1:expr, else $other:ident => $xpr2:expr,) => {
-            match $self.peek() {
-                Ok($tok) => Ok($xpr1),
-                Ok($other) => Ok($xpr2),
-                Err(err) => Err(err),
-            }
-        };
-    }
-
     /// convenience macro for creating a `lex::Token::$name(TokLoc { tok: ltok::$name::$tok, .. })`
     macro_rules! ltokl {
         ($type:ident::$name:ident) => {
@@ -504,6 +502,5 @@ mod macros {
     pub(crate) use ltokl as is_tok;
     pub(crate) use missing_delim;
     pub(crate) use peek_no_eof;
-    pub(crate) use peek_ok_eof;
     pub(crate) use syntax_error;
 }
