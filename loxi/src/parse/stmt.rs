@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use crate::interp::environment::Environment;
+use crate::interp::env::Env;
 use crate::interp::object::Value;
 use crate::interp::RuntimeError;
 use crate::util::Location;
@@ -30,7 +30,7 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    pub fn execute(self, env: &mut Environment) -> Result<(), RuntimeError> {
+    pub fn execute(self, env: &mut Env) -> Result<(), RuntimeError> {
         match self {
             Stmt::Expr { expr } => eval_unit!(expr, env)?,
             Stmt::Print { expr, .. } => {

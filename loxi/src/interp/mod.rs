@@ -3,9 +3,9 @@ use thiserror::Error;
 use crate::parse::{token, Program};
 use crate::util::Location;
 
-use self::environment::Environment;
+use self::env::Env;
 
-pub mod environment;
+pub mod env;
 pub mod object;
 
 #[derive(Debug, Error)]
@@ -31,13 +31,13 @@ impl RuntimeError {
 }
 
 pub struct Interpreter {
-    environment: Environment,
+    environment: Env,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Interpreter {
-            environment: Environment::new(),
+            environment: Env::new(),
         }
     }
 

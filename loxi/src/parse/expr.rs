@@ -2,7 +2,7 @@ use std::cell::RefMut;
 use std::fmt::{Debug, Display};
 
 use super::token;
-use crate::interp::environment::Environment;
+use crate::interp::env::Env;
 use crate::interp::object::Value;
 use crate::interp::RuntimeError;
 use crate::util::TokLoc;
@@ -51,7 +51,7 @@ pub enum RefExpr {
 }
 
 impl ValExpr {
-    pub fn eval(self, env: &mut Environment) -> Result<Value, RuntimeError> {
+    pub fn eval(self, env: &mut Env) -> Result<Value, RuntimeError> {
         match self {
             ValExpr::Literal { value } => match value.tok {
                 token::Literal::Number(num) => Ok(Value::Number(num)),
@@ -108,7 +108,7 @@ impl ValExpr {
 }
 
 impl RefExpr {
-    pub fn eval(self, env: &mut Environment) -> Result<RefMut<'_, Value>, RuntimeError> {
+    pub fn eval(self, env: &mut Env) -> Result<RefMut<'_, Value>, RuntimeError> {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },

@@ -5,21 +5,21 @@ use std::rc::Rc;
 use super::object::Value;
 
 // inspired by: https://stackoverflow.com/a/48298865/16506263
-pub struct Environment {
+pub struct Env {
     inner: Option<Rc<Node>>,
 }
 
 struct Node {
     values: RefCell<HashMap<String, Value>>,
-    parent: Environment,
+    parent: Env,
 }
 
-impl Environment {
+impl Env {
     pub fn new() -> Self {
-        Environment {
+        Env {
             inner: Some(Rc::new(Node {
                 values: RefCell::new(HashMap::new()),
-                parent: Environment { inner: None },
+                parent: Env { inner: None },
             })),
         }
     }
@@ -29,7 +29,7 @@ impl Environment {
             values: RefCell::new(HashMap::new()),
             parent: self.clone(),
         };
-        Environment {
+        Env {
             inner: Some(Rc::new(node)),
         }
     }
@@ -74,7 +74,7 @@ impl Environment {
     }
 }
 
-impl Clone for Environment {
+impl Clone for Env {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -90,7 +90,7 @@ mod test {
     fn env_has_parent() {
         let clone = |v: Ref<'_, Value>| v.clone();
 
-        let mut parent = Environment::new();
+        let mut parent = Env::new();
         parent.define("a".to_string(), Value::Number(1.0));
         assert_eq!(parent.get("a").map(clone), Some(Value::Number(1.0)));
 
@@ -106,11 +106,11 @@ mod test {
         assert_eq!(two, Value::Number(2.0));
     }
 
-    fn borrow1(env: &mut Environment) -> Value {
+    fn borrow1(env: &mut Env) -> Value {
         env.get_mut("a").unwrap().clone()
     }
 
-    fn borrow2(env: &mut Environment) -> Value {
+    fn borrow2(env: &mut Env) -> Value {
         env.get_mut("b").unwrap().clone()
     }
 }
