@@ -83,7 +83,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     let parser = Parser::new(&tokens);
     let program = parser.parse().map_err(|err| {
         err.iter().for_each(|e| {
-            print_context(&lines, e.loc);
+            print_context(&lines, e.loc());
             println_red!("{}", e);
         });
 

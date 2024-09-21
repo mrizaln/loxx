@@ -13,7 +13,7 @@ use expr::{
 };
 use stmt::Stmt;
 
-use macros::{is_tok, peek_no_eof, peek_ok_eof, syntax_error};
+use macros::{is_tok, missing_delim, peek_no_eof, peek_ok_eof, syntax_error};
 
 pub mod expr;
 pub mod stmt;
@@ -39,13 +39,29 @@ pub mod token;
 /// primary     -> NUMBER | STRING | "true" | "false" | "nil" | grouping | IDENTIFIER ;
 /// grouping    -> "(" expression ")"
 
-// TODO: Add more variation of the SyntaxError
 #[derive(Debug, Error)]
-#[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
-pub struct SyntaxError {
-    pub expect: &'static str,
-    pub real: &'static str,
-    pub loc: Location,
+pub enum SyntaxError {
+    #[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
+    Expect {
+        expect: &'static str,
+        real: &'static str,
+        loc: Location,
+    },
+
+    #[error("{start} SyntaxError: Missing closing delimiter '{delim}'")]
+    MissingDelim {
+        delim: &'static str,
+        start: Location,
+    },
+}
+
+impl SyntaxError {
+    pub fn loc(&self) -> Location {
+        match self {
+            SyntaxError::Expect { loc, .. } => *loc,
+            SyntaxError::MissingDelim { start, .. } => *start,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,18 +71,21 @@ pub enum ParseError {
 }
 
 impl ParseError {
-    pub fn loc(&self) -> Location {
+    /// Convert the variant to ParseError::SyntaxError(SyntaxError::Expect)
+    pub fn syntax_err(self, expect: &'static str) -> Self {
         match self {
-            ParseError::SyntaxError(SyntaxError { loc, .. }) => *loc,
-            ParseError::EndOfFile(loc) => *loc,
+            ParseError::EndOfFile(loc) => syntax_error!(expect, "<eof>", loc),
+            _ => self,
         }
     }
 
-    /// Convert the variant to ParseError::SyntaxError if it is not already
-    pub fn syntax_err(self, expect: &'static str) -> Self {
+    /// convert the variant to ParseError::SyntaxError(SyntaxError::MissingDelim)
+    pub fn missing_delim(self, delim: &'static str, start: Location) -> Self {
         match self {
-            ParseError::SyntaxError(_) => self,
-            ParseError::EndOfFile(loc) => syntax_error!(expect, "<eof>", loc),
+            ParseError::EndOfFile(_) => {
+                ParseError::SyntaxError(SyntaxError::MissingDelim { start, delim })
+            }
+            _ => self,
         }
     }
 }
@@ -142,10 +161,7 @@ impl<'a> Parser<'a> {
             }
             _ => self.statement(),
         }
-        .map_err(|err| {
-            self.synchronize();
-            err
-        })
+        .inspect_err(|_| self.synchronize())
     }
 
     // TODO: add edge case check when the variable initializer has identifier with the same name
@@ -178,12 +194,7 @@ impl<'a> Parser<'a> {
         match self.peek()? {
             is_tok!(Keyword::Print) => {
                 let loc = self.advance().unwrap().loc();
-                let expr = match self.expression_statement() {
-                    Err(err) => Err(err.syntax_err("<expression>")),
-                    Ok(Stmt::Expr { expr }) => Ok(expr),
-                    Ok(_) => unreachable!(),
-                }?;
-                Ok(Stmt::Print { loc, expr })
+                self.print_statement(loc)
             }
             is_tok!(Punctuation::BraceLeft) => {
                 let loc = self.advance().unwrap().loc();
@@ -193,31 +204,37 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn block(&mut self, _start: Location) -> StmtResult {
+    fn print_statement(&mut self, loc: Location) -> StmtResult {
+        let expr = match self.expression_statement()? {
+            Stmt::Expr { expr } => expr,
+            _ => panic!("Should be expr"),
+        };
+        Ok(Stmt::Print { loc, expr })
+    }
+
+    fn block(&mut self, start: Location) -> StmtResult {
         let mut statements = Vec::new();
 
-        loop {
-            match self.peek().map_err(|e| e.syntax_err("<statement>"))? {
-                is_tok!(Punctuation::BraceRight) => break,
+        // this loop can only stop if SyntaxError occured or BraceRight encountered
+        let _ = loop {
+            match self.peek().map_err(|e| e.missing_delim("}", start))? {
+                is_tok!(Punctuation::BraceRight) => break self.advance(),
                 _ => statements.push(self.declaration()?),
             }
-        }
-
-        // TODO: tell the location of the starting brace on the error message
-        let _ = peek_no_eof! { self as ["}"]
-            if is_tok!(Punctuation::BraceRight) => self.advance(),
-        }?;
+        };
 
         Ok(Stmt::Block { statements })
     }
 
     fn expression_statement(&mut self) -> StmtResult {
-        let expr = self.expression()?;
-
-        let _ = peek_ok_eof! { self as [";"]
+        let expr = self.expression().map_err(|e| e.syntax_err(";"))?;
+        let _ = peek_no_eof! { self as [";"]
             if is_tok!(Punctuation::Semicolon) => self.advance(),
-        }?;
-
+        }
+        .inspect_err(|e| match e {
+            ParseError::SyntaxError(err) => println!("{err:?}"),
+            ParseError::EndOfFile(loc) => println!("<eof> at {loc}"),
+        })?;
         Ok(Stmt::Expr { expr: *expr })
     }
 
@@ -237,7 +254,7 @@ impl<'a> Parser<'a> {
             expr = Box::new(val_expr!(Binary {
                 left: expr,
                 operator: op,
-                right: inner(self).map_err(|err| err.syntax_err("<expression>"))?,
+                right: inner(self).map_err(|ee| ee.syntax_err("<expression>"))?,
             }));
         }
 
@@ -314,11 +331,11 @@ impl<'a> Parser<'a> {
             is_tok!(Literal::Identifier(name, _)) => var(name.clone()),
 
             is_tok!(Punctuation::ParenLeft) => {
-                let expr = self.expression()?;
-                // TODO: tell the location of the starting brace on the error message
-                let _ = peek_no_eof! { self as [")"]
-                    if is_tok!(Punctuation::ParenRight) => self.advance(),
-                }?;
+                let expr = self.expression().map_err(|e| e.missing_delim(")", loc))?;
+                match self.peek().map_err(|e| e.missing_delim(")", loc))? {
+                    is_tok!(Punctuation::ParenRight) => self.advance(),
+                    _ => Err(missing_delim!(")", loc))?,
+                };
                 group_expr!(*expr)
             }
 
@@ -413,10 +430,19 @@ mod macros {
     /// convenience macro for creating a `ParseError::SyntaxError`
     macro_rules! syntax_error {
         ($expect:expr, $real:expr, $loc:expr) => {
-            ParseError::SyntaxError(SyntaxError {
+            ParseError::SyntaxError(SyntaxError::Expect {
                 expect: $expect,
                 real: $real,
                 loc: $loc,
+            })
+        };
+    }
+
+    macro_rules! missing_delim {
+        ($delim:expr, $start:expr) => {
+            ParseError::SyntaxError(SyntaxError::MissingDelim {
+                start: $start,
+                delim: $delim,
             })
         };
     }
@@ -447,7 +473,14 @@ mod macros {
             match $self.peek() {
                 Ok($tok) => Ok($xpr),
                 Ok(tok) => Err(syntax_error!($name, tok.static_str(), tok.loc())),
-                Err(err) => Err(err.syntax_err($name)),
+                Err(err) => Err(err),
+            }
+        };
+        ($self:ident as [$name:expr] if $tok:pat => $xpr1:expr, else $other:ident => $xpr2:expr,) => {
+            match $self.peek() {
+                Ok($tok) => Ok($xpr1),
+                Ok($other) => Ok($xpr2),
+                Err(err) => Err(err),
             }
         };
     }
@@ -469,6 +502,7 @@ mod macros {
     }
 
     pub(crate) use ltokl as is_tok;
+    pub(crate) use missing_delim;
     pub(crate) use peek_no_eof;
     pub(crate) use peek_ok_eof;
     pub(crate) use syntax_error;
