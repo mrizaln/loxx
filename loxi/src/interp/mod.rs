@@ -6,7 +6,7 @@ use crate::util::Location;
 use self::env::Env;
 
 pub mod env;
-pub mod object;
+pub mod value;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {

@@ -7,12 +7,12 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
-    Object(LoxObject),
+    Object(Object),
 }
 
 // TODO: create the actual object
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct LoxObject {}
+pub struct Object {}
 
 impl Value {
     /// follows Ruby's simple rule: `false` and `nil` are falsy, everything else truthy
