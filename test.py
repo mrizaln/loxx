@@ -3,7 +3,6 @@
 # NOTE: This script is a python3 port of the test.dart script from
 #       https://github.com/munificent/craftinginterpreters
 
-from collections.abc import Callable
 import sys
 
 MIN_PYTHON = (3, 11)
@@ -11,16 +10,17 @@ if sys.version_info < MIN_PYTHON:
     sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
 
 from argparse import ArgumentParser, RawTextHelpFormatter
+from collections.abc import Callable
 from contextlib import chdir
 from dataclasses import dataclass
 from enum import Enum
 from os.path import realpath, dirname
 from pathlib import Path
+from subprocess import DEVNULL, run
 from typing import Dict, Generator, List, Self, Tuple
-from subprocess import run
+import fnmatch
 import re
 import textwrap
-import fnmatch
 
 DIR = Path(dirname(realpath(__file__)))
 
@@ -231,7 +231,7 @@ class Test:
 
         result = Result()
         for suite in tests:
-            print(f"\n- Chapter {suite.chapter.name}")
+            print(f"\n- Testing Chapter {suite.chapter.name}")
             match suite.chapter:
                 case Chapter.SCANNING | Chapter.PARSING | Chapter.EVALUATING:
                     print(f"\t- SKIPPED (can only be ran individually)")
@@ -265,6 +265,7 @@ class Test:
         return result
 
     def run_chapter(self, chapter: Chapter) -> Result:
+        print(f"\n>>> Running {self.interpreter.value.name} tests")
         suite = self._suite_from_chapter(chapter)
         result = Result()
 
@@ -273,7 +274,7 @@ class Test:
             result.skipped = 1
             return result
 
-        print(f"\n- Chapter {suite.chapter.name}")
+        print(f"\n- Testing Chapter {suite.chapter.name}")
         for test in suite.tests:
             if self.filter is not None and not self.filter.match(test):
                 result.skipped += 1
@@ -499,6 +500,9 @@ def main() -> int:
         case (None, e):
             filter = Filter(re.compile(fnmatch.translate(e)), True)
 
+    # prepare the interpreters
+    prepare_interpreters()
+
     # populate the test cases, this is required
     populate_tests()
 
@@ -529,7 +533,30 @@ def main() -> int:
 # -----------------------------------------------------------------------------
 
 
+def prepare_interpreters():
+    """
+    You can add anything here that is required to prepare the interpreters like building them.
+    The function will be called before `populate_tests()` function.
+    """
+
+    print(Cs.y("Preparing interpreters..."), end=' ')
+    print(Cs.g("DONE"))
+
+    for interpreter in Interpreter:
+        run(
+            ["cargo", "build", "--bin", interpreter.value.name.lower()],
+            cwd=DIR,
+            check=True,
+            stdout=DEVNULL,
+            stderr=DEVNULL,
+        )
+
+
 def populate_tests():
+    """
+    Populate the tests for both interpreter variants.
+    """
+
     tree_walk = [
         Chapter.SCANNING,
         Chapter.PARSING,
