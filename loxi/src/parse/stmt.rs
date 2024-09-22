@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use crate::interp::env::Env;
-use crate::interp::object::Value;
+use crate::interp::value::Value;
 use crate::interp::RuntimeError;
 use crate::util::Location;
 

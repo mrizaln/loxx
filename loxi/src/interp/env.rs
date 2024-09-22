@@ -2,7 +2,7 @@ use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use super::object::Value;
+use super::value::Value;
 
 // inspired by: https://stackoverflow.com/a/48298865/16506263
 pub struct Env {

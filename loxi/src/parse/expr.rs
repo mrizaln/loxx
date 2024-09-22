@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display};
 
 use super::token;
 use crate::interp::env::Env;
-use crate::interp::object::Value;
+use crate::interp::value::Value;
 use crate::interp::RuntimeError;
 use crate::util::TokLoc;
 
