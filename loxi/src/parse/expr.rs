@@ -114,14 +114,14 @@ impl RefExpr {
                 var: TokLoc { tok, loc },
             } => {
                 let name = tok.name;
-                env.get_mut(&name)
+                env.get(&name)
                     .ok_or(RuntimeError::UndefinedVariable(loc, name))
             }
             RefExpr::Grouping { expr } => expr.eval(env),
             RefExpr::Assignment { var, value } => {
                 let value = eval_cloned!(*value, env)?;
                 let name = var.tok.name;
-                env.get_mut(&name)
+                env.get(&name)
                     .ok_or(RuntimeError::UndefinedVariable(var.loc, name))
                     .map(|mut v| {
                         *v = value;
