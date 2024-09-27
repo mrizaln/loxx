@@ -4,8 +4,8 @@ Lox interpreter written in Rust (Lox is a scripting language created by Robert N
 
 This repository contains two packages that corresponds to the following in the book
 
-- loxi &rarr; jlox: a tree-walk interpreter (still under construction)
-- loxii &rarr; clox: a bytecode interpreter (not implemented yet)
+- `loxi ` &rarr; `jlox`: a tree-walk interpreter (still under construction)
+- `loxii` &rarr; `clox`: a bytecode interpreter (not implemented yet)
 
 ### TODO
 
@@ -32,3 +32,9 @@ The tests is performed using a python script
 ```
 
 Use the `-h` flag to see how to use it.
+
+## Extension
+
+> enable using cargo `--features` flag
+
+- `unicode`: allow non-whitespace unicode as identifier.
