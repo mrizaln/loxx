@@ -1,7 +1,5 @@
-use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefMut;
 use std::fmt::{Debug, Display};
-use std::ops::DerefMut;
 
 use super::token;
 use crate::interp::env::Env;
@@ -15,7 +13,7 @@ pub enum Expr {
     RefExpr(RefExpr),
 }
 
-// expression that produces a value
+/// Expression that produces `Value`
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum ValExpr {
     Literal {
@@ -33,9 +31,14 @@ pub enum ValExpr {
     Grouping {
         expr: Box<ValExpr>,
     },
+    Logical {
+        left: Box<Expr>,
+        kind: TokLoc<token::LogicalOp>,
+        right: Box<Expr>,
+    },
 }
 
-// expression that references a value
+/// Expression that produces a reference to `Value`
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum RefExpr {
     Variable {
@@ -52,9 +55,9 @@ pub enum RefExpr {
 
 impl Expr {
     /// Evaluate `Expr` as if it produces a `&mut Value`. The reference can only be used in `f`.
-    pub fn eval_fn<R, F>(self, env: &mut Env, mut f: F) -> Result<R, RuntimeError>
+    pub fn eval_fn<R, F>(self, env: &mut Env, f: F) -> Result<R, RuntimeError>
     where
-        F: FnMut(&mut Value) -> R,
+        F: FnOnce(&mut Value) -> R,
     {
         let val = match self {
             Expr::ValExpr(expr) => &mut expr.eval(env)?,
@@ -134,6 +137,17 @@ impl ValExpr {
                     rname,
                 ))
             }
+            ValExpr::Logical { left, kind, right } => {
+                let lhs = left.eval_cloned(env)?;
+
+                match (kind.tok, lhs.truthiness()) {
+                    (token::LogicalOp::And, false) => return Ok(lhs),
+                    (token::LogicalOp::Or, true) => return Ok(lhs),
+                    (_, _) => (),
+                };
+
+                right.eval_cloned(env)
+            }
         }
     }
 }
@@ -183,6 +197,10 @@ impl Display for ValExpr {
             ValExpr::Grouping { expr } => {
                 format!("(group {expr})")
             }
+            ValExpr::Logical { left, kind, right } => {
+                let op: &str = (&kind.tok).into();
+                format!("({op} {left} {right})")
+            }
         };
         write!(f, "{}", string)
     }
@@ -210,6 +228,10 @@ impl Debug for ValExpr {
 
             ValExpr::Grouping { expr } => {
                 format!("(group {expr:?})")
+            }
+            ValExpr::Logical { left, kind, right } => {
+                let op: &str = (&kind.tok).into();
+                format!("({op}{} {left:?} {right:?})", kind.loc)
             }
         };
         write!(f, "{}", string)

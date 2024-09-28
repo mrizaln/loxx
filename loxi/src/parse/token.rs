@@ -90,6 +90,28 @@ impl Display for BinaryOp {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum LogicalOp {
+    And,
+    Or,
+}
+
+impl Into<&str> for &LogicalOp {
+    fn into(self) -> &'static str {
+        match self {
+            LogicalOp::And => "and",
+            LogicalOp::Or => "or",
+        }
+    }
+}
+
+impl Display for LogicalOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: &str = self.into();
+        write!(f, "{str}")
+    }
+}
+
 // TODO: place the name inside a global container or something then use a reference to access the
 //       name so theres no cloning required
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -100,4 +122,5 @@ pub struct Variable {
 impl Token for Literal {}
 impl Token for UnaryOp {}
 impl Token for BinaryOp {}
+impl Token for LogicalOp {}
 impl Token for Variable {}

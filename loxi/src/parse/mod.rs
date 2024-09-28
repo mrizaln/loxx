@@ -28,7 +28,9 @@ pub mod token;
 /// if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
 /// print_stmt  -> "print" expression ";" ;
 /// expression  -> assignment ;
-/// assignment  -> IDENTIFIER "=" assignment | equality ;
+/// assignment  -> IDENTIFIER "=" assignment | logical_or ;
+/// logical_or  -> logical_and ( "or" logical_and )* ;
+/// logical_and -> equality ( "and" equality )* ;
 /// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
 /// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 /// term        -> factor ( ( "-" | "+" ) factor )* ;
@@ -284,27 +286,8 @@ impl Parser {
         self.assignment()
     }
 
-    fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
-    where
-        F1: Fn(&lex::Token) -> Option<TokLoc<token::BinaryOp>>,
-        F2: Fn(&mut Self) -> ExprResult,
-    {
-        let mut expr = inner(self)?;
-
-        while let Some(op) = curr(self.peek()?) {
-            self.advance();
-            expr = Box::new(val_expr!(Binary {
-                left: expr,
-                operator: op,
-                right: inner(self).map_err(|ee| ee.syntax_err("<expression>"))?,
-            }));
-        }
-
-        Ok(expr)
-    }
-
     fn assignment(&mut self) -> ExprResult {
-        let expr = self.equality()?;
+        let expr = self.logical_or()?;
 
         match self.peek()? {
             is_tok!(Operator::Equal) => {
@@ -324,6 +307,20 @@ impl Parser {
             }
             _ => Ok(expr),
         }
+    }
+
+    fn logical_or(&mut self) -> ExprResult {
+        self.logical(
+            |tok| conv::to_logical(tok, token::LogicalOp::Or),
+            Self::logical_and,
+        )
+    }
+
+    fn logical_and(&mut self) -> ExprResult {
+        self.logical(
+            |tok| conv::to_logical(tok, token::LogicalOp::And),
+            Self::equality,
+        )
     }
 
     fn equality(&mut self) -> ExprResult {
@@ -386,6 +383,44 @@ impl Parser {
         };
 
         Ok(Box::new(expr))
+    }
+
+    fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
+    where
+        F1: Fn(&lex::Token) -> Option<TokLoc<token::BinaryOp>>,
+        F2: Fn(&mut Self) -> ExprResult,
+    {
+        let mut expr = inner(self)?;
+
+        while let Some(op) = curr(self.peek()?) {
+            self.advance();
+            expr = Box::new(val_expr!(Binary {
+                left: expr,
+                operator: op,
+                right: inner(self).map_err(|e| e.syntax_err("<expression>"))?,
+            }));
+        }
+
+        Ok(expr)
+    }
+
+    fn logical<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
+    where
+        F1: Fn(&lex::Token) -> Option<TokLoc<token::LogicalOp>>,
+        F2: Fn(&mut Self) -> ExprResult,
+    {
+        let mut expr = inner(self)?;
+
+        while let Some(kind) = curr(self.peek()?) {
+            self.advance();
+            expr = Box::new(val_expr!(Logical {
+                left: expr,
+                kind: kind,
+                right: inner(self).map_err(|e| e.syntax_err("<expression>"))?,
+            }));
+        }
+
+        Ok(expr)
     }
 
     fn peek(&mut self) -> Result<&lex::Token, ParseError> {
@@ -467,6 +502,25 @@ mod conv {
             tok: new_tok,
             loc: tok.loc(),
         })
+    }
+
+    pub fn to_logical(
+        tok: &lex::Token,
+        kind: token::LogicalOp,
+    ) -> Option<TokLoc<token::LogicalOp>> {
+        let new_tok = match tok {
+            is_tok!(Keyword::And) => token::LogicalOp::And,
+            is_tok!(Keyword::Or) => token::LogicalOp::Or,
+            _ => return None,
+        };
+
+        match new_tok == kind {
+            true => Some(TokLoc {
+                tok: new_tok,
+                loc: tok.loc(),
+            }),
+            false => None,
+        }
     }
 }
 
