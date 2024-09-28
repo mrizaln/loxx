@@ -1,13 +1,13 @@
+use std::borrow::{Borrow, BorrowMut};
 use std::cell::RefMut;
 use std::fmt::{Debug, Display};
+use std::ops::DerefMut;
 
 use super::token;
 use crate::interp::env::Env;
 use crate::interp::value::Value;
 use crate::interp::RuntimeError;
 use crate::util::TokLoc;
-
-use macros::eval_cloned;
 
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
@@ -50,6 +50,37 @@ pub enum RefExpr {
     },
 }
 
+impl Expr {
+    /// Evaluate `Expr` as if it produces a `&mut Value`. The reference can only be used in `f`.
+    pub fn eval_fn<R, F>(self, env: &mut Env, mut f: F) -> Result<R, RuntimeError>
+    where
+        F: FnMut(&mut Value) -> R,
+    {
+        let val = match self {
+            Expr::ValExpr(expr) => &mut expr.eval(env)?,
+            Expr::RefExpr(expr) => &mut expr.eval(env)?,
+        };
+        Ok(f(val))
+    }
+
+    /// Evaluate the expression and return a `Value`. If the `Expr` is a `RefExpr`, the contained
+    /// `Value` will be cloned, if it's a ValExpr the value will be returned as is.
+    pub fn eval_cloned(self, env: &mut Env) -> Result<Value, RuntimeError> {
+        match self {
+            Expr::ValExpr(expr) => expr.eval(env),
+            Expr::RefExpr(expr) => expr.eval(env).map(|v| v.clone()),
+        }
+    }
+
+    /// Evaluate the expression without returning a value.
+    pub fn eval_unit(self, env: &mut Env) -> Result<(), RuntimeError> {
+        match self {
+            Expr::ValExpr(expr) => expr.eval(env).map(|_| ()),
+            Expr::RefExpr(expr) => expr.eval(env).map(|_| ()),
+        }
+    }
+}
+
 impl ValExpr {
     pub fn eval(self, env: &mut Env) -> Result<Value, RuntimeError> {
         match self {
@@ -62,7 +93,7 @@ impl ValExpr {
             },
             ValExpr::Grouping { expr } => expr.eval(env),
             ValExpr::Unary { operator, right } => {
-                let value = eval_cloned!(*right, env)?;
+                let value = right.eval_cloned(env)?;
                 match operator.tok {
                     token::UnaryOp::Minus => value.minus(),
                     token::UnaryOp::Not => value.not(),
@@ -78,8 +109,8 @@ impl ValExpr {
                 operator,
                 right,
             } => {
-                let lhs = eval_cloned!(*left, env)?;
-                let rhs = eval_cloned!(*right, env)?;
+                let lhs = left.eval_cloned(env)?;
+                let rhs = right.eval_cloned(env)?;
 
                 let lname = lhs.name();
                 let rname = rhs.name();
@@ -119,7 +150,7 @@ impl RefExpr {
             }
             RefExpr::Grouping { expr } => expr.eval(env),
             RefExpr::Assignment { var, value } => {
-                let value = eval_cloned!(*value, env)?;
+                let value = value.eval_cloned(env)?;
                 let name = var.tok.name;
                 env.get(&name)
                     .ok_or(RuntimeError::UndefinedVariable(var.loc, name))
@@ -230,24 +261,6 @@ impl Debug for Expr {
 }
 
 pub mod macros {
-    macro_rules! eval_cloned {
-        ($xpr:expr, $env:ident) => {
-            match $xpr {
-                Expr::ValExpr(expr) => expr.eval($env),
-                Expr::RefExpr(expr) => expr.eval($env).map(|v| v.clone()),
-            }
-        };
-    }
-
-    macro_rules! eval_unit {
-        ($xpr:expr, $env:ident) => {
-            match $xpr {
-                Expr::ValExpr(expr) => expr.eval($env).map(|_| ()),
-                Expr::RefExpr(expr) => expr.eval($env).map(|_| ()),
-            }
-        };
-    }
-
     macro_rules! val_expr {
         ($kind:tt $xpr:tt) => {
             Expr::ValExpr(ValExpr::$kind $xpr)
@@ -273,8 +286,6 @@ pub mod macros {
         };
     }
 
-    pub(crate) use eval_cloned;
-    pub(crate) use eval_unit;
     pub(crate) use group_expr;
     pub(crate) use ref_expr;
     pub(crate) use val_expr;

@@ -22,9 +22,10 @@ pub mod token;
 /// program     -> declaration* EOF ;
 /// declaration -> var_decl | statement ;
 /// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
-/// statement   -> expr_stmt | print_stmt ;
+/// statement   -> expr_stmt | if_stmt | print_stmt | block ;
 /// block       -> "{" declaration* "}"
 /// expr_stmt   -> expression ";" ;
+/// if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
 /// print_stmt  -> "print" expression ";" ;
 /// expression  -> assignment ;
 /// assignment  -> IDENTIFIER "=" assignment | equality ;
@@ -211,6 +212,10 @@ impl Parser {
                 let loc = self.advance().unwrap().loc();
                 self.block(loc)
             }
+            is_tok!(Keyword::If) => {
+                let loc = self.advance().unwrap().loc();
+                self.if_statement(loc)
+            }
             _ => self.expression_statement(),
         }
     }
@@ -251,6 +256,28 @@ impl Parser {
             if is_tok!(Punctuation::Semicolon) => self.advance(),
         }?;
         Ok(Stmt::Expr { expr: *expr })
+    }
+
+    fn if_statement(&mut self, loc: Location) -> StmtResult {
+        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
+        let condition = self.expression()?;
+        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+
+        let then = self.statement()?;
+        let otherwise = match self.peek() {
+            Ok(is_tok!(Keyword::Else)) => {
+                self.advance();
+                Some(self.statement()?)
+            }
+            _ => None,
+        };
+
+        Ok(Stmt::If {
+            loc,
+            condition: *condition,
+            then: Box::new(then),
+            otherwise: otherwise.map(|v| Box::new(v)),
+        })
     }
 
     fn expression(&mut self) -> ExprResult {

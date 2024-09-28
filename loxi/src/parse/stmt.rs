@@ -5,10 +5,7 @@ use crate::interp::value::Value;
 use crate::interp::RuntimeError;
 use crate::util::Location;
 
-use super::expr::{
-    macros::{eval_cloned, eval_unit},
-    Expr,
-};
+use super::expr::Expr;
 
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Stmt {
@@ -27,24 +24,20 @@ pub enum Stmt {
     Block {
         statements: Vec<Stmt>,
     },
+    If {
+        loc: Location,
+        condition: Expr,
+        then: Box<Stmt>,
+        otherwise: Option<Box<Stmt>>,
+    },
 }
 
 impl Stmt {
     pub fn execute(self, env: &mut Env) -> Result<(), RuntimeError> {
         match self {
-            Stmt::Expr { expr } => eval_unit!(expr, env)?,
-            Stmt::Print { expr, .. } => {
-                // eval_ref! macro could be defined, but the error handling must be built-in into
-                // the macro because it relies on lifetime extension of the Value where the Error
-                // must be thrown from the match arms. I want the eval_ref! macro to be able to not
-                // handle the error and return it as is so user can handle it themselves. eval_unit!
-                // and eval_cloned! both do that and I want symmetry.
-                match expr {
-                    Expr::ValExpr(expr) => println!("{}", expr.eval(env)?),
-                    Expr::RefExpr(expr) => println!("{}", expr.eval(env)?),
-                };
-            }
-            Stmt::Var { loc: _, name, init } => {
+            Stmt::Expr { expr } => expr.eval_unit(env)?,
+            Stmt::Print { expr, .. } => expr.eval_fn(env, |v| println!("{}", v))?,
+            Stmt::Var { name, init, .. } => {
                 //
                 // there are two ways to implement this if the init is a RefExpr:
                 // - clone the init         -> the variable then becomes separate entity
@@ -57,7 +50,7 @@ impl Stmt {
                 //      -- 2024/09/19 02:57 [chapter 8.2: global variables]
 
                 let value = match init {
-                    Some(expr) => eval_cloned!(expr, env)?,
+                    Some(expr) => expr.eval_cloned(env)?,
                     None => Value::Nil,
                 };
 
@@ -70,7 +63,21 @@ impl Stmt {
                     stmt.execute(&mut new_env)?;
                 }
             }
+            Stmt::If {
+                condition,
+                then,
+                otherwise,
+                ..
+            } => match condition.eval_fn(env, |v| v.truthiness())? {
+                true => then.execute(env)?,
+                false => {
+                    if let Some(stmt) = otherwise {
+                        stmt.execute(env)?
+                    }
+                }
+            },
         };
+
         Ok(())
     }
 }
@@ -91,6 +98,15 @@ impl Display for Stmt {
                 }
                 write!(f, ")")
             }
+            Stmt::If {
+                condition,
+                then,
+                otherwise,
+                ..
+            } => match otherwise {
+                Some(other) => write!(f, "(if-else {condition} {then} {other})"),
+                None => write!(f, "(if {condition} {then})"),
+            },
         }
     }
 }
@@ -111,6 +127,15 @@ impl Debug for Stmt {
                 }
                 write!(f, ")")
             }
+            Stmt::If {
+                loc,
+                condition,
+                then,
+                otherwise,
+            } => match otherwise {
+                Some(other) => write!(f, "(if-else{loc} {condition:?} {then:?} {other:?})"),
+                None => write!(f, "(if{loc} {condition:?} {then:?})"),
+            },
         }
     }
 }
