@@ -30,10 +30,15 @@ pub enum Stmt {
         then: Box<Stmt>,
         otherwise: Option<Box<Stmt>>,
     },
+    While {
+        loc: Location,
+        condition: Expr,
+        body: Box<Stmt>,
+    },
 }
 
 impl Stmt {
-    pub fn execute(self, env: &mut Env) -> Result<(), RuntimeError> {
+    pub fn execute(&self, env: &mut Env) -> Result<(), RuntimeError> {
         match self {
             Stmt::Expr { expr } => expr.eval_unit(env)?,
             Stmt::Print { expr, .. } => expr.eval_fn(env, |v| println!("{}", v))?,
@@ -55,7 +60,7 @@ impl Stmt {
                 };
 
                 // TODO: add location metadata
-                env.define(name, value);
+                env.define(name.clone(), value);
             }
             Stmt::Block { statements } => {
                 let mut new_env = env.child();
@@ -76,6 +81,13 @@ impl Stmt {
                     }
                 }
             },
+            Stmt::While {
+                condition, body, ..
+            } => {
+                while condition.eval_fn(env, |v| v.truthiness())? {
+                    body.execute(env)?
+                }
+            }
         };
 
         Ok(())
@@ -107,6 +119,9 @@ impl Display for Stmt {
                 Some(other) => write!(f, "(if-else {condition} {then} {other})"),
                 None => write!(f, "(if {condition} {then})"),
             },
+            Stmt::While {
+                condition, body, ..
+            } => write!(f, "(while {condition} {body})"),
         }
     }
 }
@@ -136,6 +151,11 @@ impl Debug for Stmt {
                 Some(other) => write!(f, "(if-else{loc} {condition:?} {then:?} {other:?})"),
                 None => write!(f, "(if{loc} {condition:?} {then:?})"),
             },
+            Stmt::While {
+                loc,
+                condition,
+                body,
+            } => write!(f, "(while{loc} {condition:?} {body:?})"),
         }
     }
 }

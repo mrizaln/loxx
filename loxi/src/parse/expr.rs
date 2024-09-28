@@ -55,7 +55,7 @@ pub enum RefExpr {
 
 impl Expr {
     /// Evaluate `Expr` as if it produces a `&mut Value`. The reference can only be used in `f`.
-    pub fn eval_fn<R, F>(self, env: &mut Env, f: F) -> Result<R, RuntimeError>
+    pub fn eval_fn<R, F>(&self, env: &mut Env, f: F) -> Result<R, RuntimeError>
     where
         F: FnOnce(&mut Value) -> R,
     {
@@ -68,7 +68,7 @@ impl Expr {
 
     /// Evaluate the expression and return a `Value`. If the `Expr` is a `RefExpr`, the contained
     /// `Value` will be cloned, if it's a ValExpr the value will be returned as is.
-    pub fn eval_cloned(self, env: &mut Env) -> Result<Value, RuntimeError> {
+    pub fn eval_cloned(&self, env: &mut Env) -> Result<Value, RuntimeError> {
         match self {
             Expr::ValExpr(expr) => expr.eval(env),
             Expr::RefExpr(expr) => expr.eval(env).map(|v| v.clone()),
@@ -76,7 +76,7 @@ impl Expr {
     }
 
     /// Evaluate the expression without returning a value.
-    pub fn eval_unit(self, env: &mut Env) -> Result<(), RuntimeError> {
+    pub fn eval_unit(&self, env: &mut Env) -> Result<(), RuntimeError> {
         match self {
             Expr::ValExpr(expr) => expr.eval(env).map(|_| ()),
             Expr::RefExpr(expr) => expr.eval(env).map(|_| ()),
@@ -85,11 +85,11 @@ impl Expr {
 }
 
 impl ValExpr {
-    pub fn eval(self, env: &mut Env) -> Result<Value, RuntimeError> {
+    pub fn eval(&self, env: &mut Env) -> Result<Value, RuntimeError> {
         match self {
-            ValExpr::Literal { value } => match value.tok {
-                token::Literal::Number(num) => Ok(Value::Number(num)),
-                token::Literal::String(str) => Ok(Value::String(str)),
+            ValExpr::Literal { value } => match &value.tok {
+                token::Literal::Number(num) => Ok(Value::Number(*num)),
+                token::Literal::String(str) => Ok(Value::String(str.clone())),
                 token::Literal::True => Ok(Value::Bool(true)),
                 token::Literal::False => Ok(Value::Bool(false)),
                 token::Literal::Nil => Ok(Value::Nil),
@@ -103,7 +103,7 @@ impl ValExpr {
                 }
                 .ok_or(RuntimeError::InvalidUnaryOp(
                     operator.loc,
-                    operator.tok,
+                    operator.tok.clone(),
                     value.name(),
                 ))
             }
@@ -132,7 +132,7 @@ impl ValExpr {
                 }
                 .ok_or(RuntimeError::InvalidBinaryOp(
                     operator.loc,
-                    operator.tok,
+                    operator.tok.clone(),
                     lname,
                     rname,
                 ))
@@ -140,7 +140,7 @@ impl ValExpr {
             ValExpr::Logical { left, kind, right } => {
                 let lhs = left.eval_cloned(env)?;
 
-                match (kind.tok, lhs.truthiness()) {
+                match (&kind.tok, lhs.truthiness()) {
                     (token::LogicalOp::And, false) => return Ok(lhs),
                     (token::LogicalOp::Or, true) => return Ok(lhs),
                     (_, _) => (),
@@ -153,21 +153,21 @@ impl ValExpr {
 }
 
 impl RefExpr {
-    pub fn eval(self, env: &mut Env) -> Result<RefMut<'_, Value>, RuntimeError> {
+    pub fn eval<'a>(&self, env: &'a mut Env) -> Result<RefMut<'a, Value>, RuntimeError> {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
-            } => {
-                let name = tok.name;
-                env.get(&name)
-                    .ok_or(RuntimeError::UndefinedVariable(loc, name))
-            }
+            } => env
+                .get(&tok.name)
+                .ok_or(RuntimeError::UndefinedVariable(*loc, tok.name.clone())),
             RefExpr::Grouping { expr } => expr.eval(env),
             RefExpr::Assignment { var, value } => {
                 let value = value.eval_cloned(env)?;
-                let name = var.tok.name;
-                env.get(&name)
-                    .ok_or(RuntimeError::UndefinedVariable(var.loc, name))
+                env.get(&var.tok.name)
+                    .ok_or(RuntimeError::UndefinedVariable(
+                        var.loc,
+                        var.tok.name.clone(),
+                    ))
                     .map(|mut v| {
                         *v = value;
                         v
