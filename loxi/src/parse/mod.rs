@@ -20,24 +20,60 @@ pub mod token;
 ///! Lox Grammar (unfinished)
 ///  ------------------------
 /// program     -> declaration* EOF ;
-/// declaration -> var_decl | statement ;
+///
+/// declaration -> var_decl
+///                 | statement ;
+///
 /// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
-/// statement   -> expr_stmt | if_stmt | print_stmt | while_stmt | block ;
+///
+/// statement   -> expr_stmt
+///                 | if_stmt
+///                 | print_stmt
+///                 | while_stmt
+///                 | for_statment
+///                 | block ;
+///
 /// block       -> "{" declaration* "}"
+///
 /// expr_stmt   -> expression ";" ;
+///
 /// if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
+///
 /// print_stmt  -> "print" expression ";" ;
+///
 /// while_stmt  -> "while" "(" expression ")" statement ;
+///
+/// for_stmt    -> "for" "(" (var_decl | expr_stmt | ";")
+///                 expression? ";"
+///                 expression? ")" statement ;
+///
 /// expression  -> assignment ;
-/// assignment  -> IDENTIFIER "=" assignment | logical_or ;
+///
+/// assignment  -> IDENTIFIER "=" assignment
+///                 | logical_or ;
+///
 /// logical_or  -> logical_and ( "or" logical_and )* ;
+///
 /// logical_and -> equality ( "and" equality )* ;
+///
 /// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
+///
 /// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+///
 /// term        -> factor ( ( "-" | "+" ) factor )* ;
+///
 /// factor      -> unary ( ( "/" | "*" ) unary )* ;
+///
 /// unary       -> ( "!" | "-" ) unary | primary ;
-/// primary     -> NUMBER | STRING | "true" | "false" | "nil" | grouping | IDENTIFIER ;
+///
+/// primary     -> NUMBER
+///                 | STRING
+///                 | "true"
+///                 | "false"
+///                 | "nil"
+///                 | grouping
+///                 | IDENTIFIER ;
+///
 /// grouping    -> "(" expression ")"
 
 #[derive(Debug, Error)]
@@ -223,6 +259,10 @@ impl Parser {
                 let loc = self.advance().unwrap().loc();
                 self.while_statement(loc)
             }
+            is_tok!(Keyword::For) => {
+                let loc = self.advance().unwrap().loc();
+                self.for_statement(loc)
+            }
             _ => self.expression_statement(),
         }
     }
@@ -246,6 +286,69 @@ impl Parser {
             condition: *condition,
             body: Box::new(body),
         })
+    }
+
+    fn for_statement(&mut self, loc: Location) -> StmtResult {
+        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
+
+        let init = match self
+            .peek()
+            .map_err(|err| err.syntax_err("<var_stmt> or <expr_stmt"))?
+        {
+            is_tok!(Punctuation::Semicolon) => {
+                self.advance();
+                None
+            }
+            is_tok!(Keyword::Var) => {
+                self.advance();
+                Some(self.var_declaration()?)
+            }
+            _ => Some(self.expression_statement()?),
+        };
+
+        let condition = peek_no_eof! { self as ["<expression>"]
+            if is_tok!(Punctuation::Semicolon) => None,
+            else _ => Some(self.expression()?),
+        }?;
+        peek_no_eof! { self as [";"] if is_tok!(Punctuation::Semicolon) => self.advance(), }?;
+
+        let increment = peek_no_eof! { self as [")"]
+            if is_tok!(Punctuation::ParenRight) => None,
+            else _ => Some(self.expression()?),
+        }?;
+        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+
+        // desugar the for loop into a while loop
+
+        let condition = match condition {
+            Some(expr) => *expr,
+            None => val_expr!(Literal {
+                value: TokLoc {
+                    tok: token::Literal::True,
+                    loc
+                }
+            }),
+        };
+
+        let body = match increment.map(|v| *v) {
+            None => self.statement()?,
+            Some(expr) => Stmt::Block {
+                statements: vec![self.statement()?, Stmt::Expr { expr }],
+            },
+        };
+
+        let while_stmt = Stmt::While {
+            loc,
+            condition,
+            body: Box::new(body),
+        };
+
+        match init {
+            Some(stmt) => Ok(Stmt::Block {
+                statements: vec![stmt, while_stmt],
+            }),
+            None => Ok(while_stmt),
+        }
     }
 
     fn block(&mut self, start: Location) -> StmtResult {
@@ -397,7 +500,7 @@ impl Parser {
             }
 
             lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
-            _ => return Err(syntax_error!("<expression", curr.static_str(), loc)),
+            _ => return Err(syntax_error!("<expression>", curr.static_str(), loc)),
         };
 
         Ok(Box::new(expr))
@@ -573,7 +676,7 @@ mod macros {
                 Err(err) => Err(err.syntax_err($name)),
             }
         };
-        ($self:ident as [$name:expr] if $tok:pat => $xpr1:expr, else $other:ident => $xpr2:expr,) => {
+        ($self:ident as [$name:expr] if $tok:pat => $xpr1:expr, else $other:tt => $xpr2:expr,) => {
             match $self.peek() {
                 Ok($tok) => Ok($xpr1),
                 Ok($other) => Ok($xpr2),
