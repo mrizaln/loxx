@@ -1,6 +1,8 @@
+use lasso::Spur;
 use std::collections::VecDeque;
 use thiserror::Error;
 
+use crate::interp::function::Function;
 use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
 
@@ -21,8 +23,15 @@ pub mod token;
 ///  ------------------------
 /// program     -> declaration* EOF ;
 ///
-/// declaration -> var_decl
+/// declaration -> fun_decl
+///                 | var_decl
 ///                 | statement ;
+///
+/// fun_dec     -> "fun" function ;
+///
+/// function    -> IDENTIFIER "(" parameters? ")" block ;
+///
+/// parameters  -> IDENTIFIER ( "," IDENTIFIER )* ;
 ///
 /// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
 ///
@@ -216,6 +225,10 @@ impl Parser {
                     self.advance();
                     self.var_declaration()
                 }
+                is_tok!(Keyword::Fun) => {
+                    let loc = self.advance().unwrap().loc();
+                    self.function_declaration(loc)
+                }
                 _ => self.statement(),
             };
             match stmt {
@@ -232,6 +245,62 @@ impl Parser {
         } else {
             None
         }
+    }
+
+    fn function_declaration(&mut self, loc: Location) -> StmtResult {
+        let name = peek_no_eof! { self as ["<identifier>"]
+            if is_tok!(Literal::Identifier(name, _)) => name.clone(),
+        }?;
+        self.advance();
+
+        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
+
+        let mut params = Vec::<Spur>::new();
+
+        match self.peek() {
+            Ok(is_tok!(Punctuation::ParenRight)) => {
+                self.advance();
+            }
+            Ok(is_tok!(Literal::Identifier(_, _))) => {
+                loop {
+                    match self.peek() {
+                        Err(err) => Err(err.syntax_err("<identifier>"))?,
+                        Ok(is_tok!(Literal::Identifier(name, _))) => {
+                            params.push(*name);
+                            self.advance();
+                        }
+                        Ok(is_tok!(Punctuation::Comma)) => {
+                            self.advance();
+                            continue;
+                        }
+                        Ok(_) => break,
+                    };
+                }
+                peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+            }
+            Ok(tok) => Err(syntax_error!(
+                "<identifier> or )",
+                tok.static_str(),
+                tok.loc()
+            ))?,
+            Err(err) => Err(err.syntax_err("<identifier> or )"))?,
+        }
+
+        let body = peek_no_eof! { self as ["{"]
+            if is_tok!(Punctuation::BraceLeft) => {
+                let loc = self.advance().unwrap().loc();
+                self.block(loc)?
+            },
+        }?;
+
+        let body = match body {
+            Stmt::Block { statements } => statements.into_boxed_slice(),
+            _ => unreachable!(),
+        };
+
+        Ok(Stmt::Function {
+            func: Function::new(name, params.into_boxed_slice(), body, loc),
+        })
     }
 
     fn var_declaration(&mut self) -> StmtResult {

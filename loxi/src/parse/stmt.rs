@@ -2,9 +2,7 @@ use std::fmt::{Debug, Display};
 
 use lasso::{Rodeo, Spur};
 
-use crate::interp::env::Env;
-use crate::interp::value::Value;
-use crate::interp::RuntimeError;
+use crate::interp::{env::Env, function::Function, value::Value, RuntimeError};
 use crate::util::Location;
 
 use super::expr::Expr;
@@ -36,6 +34,9 @@ pub enum Stmt {
         loc: Location,
         condition: Expr,
         body: Box<Stmt>,
+    },
+    Function {
+        func: Function,
     },
 }
 
@@ -90,6 +91,9 @@ impl Stmt {
                     body.execute(env, arena)?
                 }
             }
+
+            // should I really clone here?
+            Stmt::Function { func } => env.define(func.name, Value::Function(func.clone())),
         };
 
         Ok(())
@@ -126,6 +130,17 @@ impl Display for Stmt {
             Stmt::While {
                 condition, body, ..
             } => write!(f, "(while {condition} {body})"),
+            Stmt::Function { func } => {
+                write!(f, "(fun (")?;
+                for param in &func.params {
+                    write!(f, " spur|{}|", param.into_inner())?;
+                }
+                write!(f, ")")?;
+                for stmt in &func.body {
+                    write!(f, " {stmt}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -160,6 +175,17 @@ impl Debug for Stmt {
                 condition,
                 body,
             } => write!(f, "(while{loc} {condition:?} {body:?})"),
+            Stmt::Function { func } => {
+                write!(f, "(fun{} (", func.loc)?;
+                for param in &func.params {
+                    write!(f, " spur|{}|", param.into_inner())?;
+                }
+                write!(f, ")")?;
+                for stmt in &func.body {
+                    write!(f, " {stmt:?}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
