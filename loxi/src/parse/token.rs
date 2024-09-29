@@ -1,21 +1,24 @@
 use std::fmt::Display;
 
+use lasso::Spur;
+
 use crate::util::Token;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
     Number(f64),
-    String(String),
+    String(Spur),
     True,
     False,
     Nil,
 }
 
+// TODO: remove this impl and create a proper conversion to String using the lasso::RodeoReader
 impl Into<String> for &Literal {
     fn into(self) -> String {
         match self {
             Literal::Number(num) => format!("{num}"),
-            Literal::String(str) => format!(r#""{str}""#),
+            Literal::String(spur) => format!(r#""spur|{}|""#, spur.into_inner()),
             Literal::True => "true".into(),
             Literal::False => "false".into(),
             Literal::Nil => "nil".into(),
@@ -116,7 +119,7 @@ impl Display for LogicalOp {
 //       name so theres no cloning required
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Variable {
-    pub name: String,
+    pub name: Spur,
 }
 
 impl Token for Literal {}

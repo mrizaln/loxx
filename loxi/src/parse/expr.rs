@@ -1,12 +1,15 @@
 use std::cell::RefMut;
 use std::fmt::{Debug, Display};
+use std::rc::Rc;
+
+use lasso::Rodeo;
 
 use super::token;
 use crate::interp::env::Env;
 use crate::interp::function::Callable;
 use crate::interp::value::Value;
 use crate::interp::RuntimeError;
-use crate::util::{Location, TokLoc};
+use crate::util::{self, Location, TokLoc};
 
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
@@ -65,34 +68,34 @@ impl Expr {
     pub const MAX_FUNC_ARGS: usize = 255;
 
     /// Evaluate `Expr` as if it produces a `&mut Value`. The reference can only be used in `f`.
-    pub fn eval_fn<R, F>(&self, env: &mut Env, f: F) -> Result<R, RuntimeError>
+    pub fn eval_fn<R, F>(&self, env: &mut Env, arena: &Rodeo, f: F) -> Result<R, RuntimeError>
     where
         F: FnOnce(&mut Value) -> R,
     {
         let val = match self {
-            Expr::ValExpr(expr) => &mut expr.eval(env)?,
-            Expr::RefExpr(expr) => &mut expr.eval(env)?,
+            Expr::ValExpr(expr) => &mut expr.eval(env, arena)?,
+            Expr::RefExpr(expr) => &mut expr.eval(env, arena)?,
         };
         Ok(f(val))
     }
 
     /// Evaluate the expression and return a `Value`. If the `Expr` is a `RefExpr`, the contained
     /// `Value` will be cloned, if it's a ValExpr the value will be returned as is.
-    pub fn eval_cloned(&self, env: &mut Env) -> Result<Value, RuntimeError> {
+    pub fn eval_cloned(&self, env: &mut Env, arena: &Rodeo) -> Result<Value, RuntimeError> {
         match self {
-            Expr::ValExpr(expr) => expr.eval(env),
-            Expr::RefExpr(expr) => expr.eval(env).map(|v| v.clone()),
+            Expr::ValExpr(expr) => expr.eval(env, arena),
+            Expr::RefExpr(expr) => expr.eval(env, arena).map(|v| v.clone()),
         }
     }
 
     /// Evaluate the expression without returning a value.
-    pub fn eval_unit(&self, env: &mut Env) -> Result<(), RuntimeError> {
+    pub fn eval_unit(&self, env: &mut Env, arena: &Rodeo) -> Result<(), RuntimeError> {
         match self {
             Expr::ValExpr(expr) => {
-                expr.eval(env)?;
+                expr.eval(env, arena)?;
             }
             Expr::RefExpr(expr) => {
-                expr.eval(env)?;
+                expr.eval(env, arena)?;
             }
         }
         Ok(())
@@ -100,18 +103,23 @@ impl Expr {
 }
 
 impl ValExpr {
-    pub fn eval(&self, env: &mut Env) -> Result<Value, RuntimeError> {
+    pub fn eval(&self, env: &mut Env, arena: &Rodeo) -> Result<Value, RuntimeError> {
         match self {
             ValExpr::Literal { value } => match &value.tok {
                 token::Literal::Number(num) => Ok(Value::Number(*num)),
-                token::Literal::String(str) => Ok(Value::String(str.clone())),
+                token::Literal::String(str) => {
+                    let literal = arena.resolve(str);
+                    let string = util::extract_string_literal_identifier(literal)
+                        .expect("Not a string literal");
+                    Ok(Value::String(Rc::new(string.into())))
+                }
                 token::Literal::True => Ok(Value::Bool(true)),
                 token::Literal::False => Ok(Value::Bool(false)),
                 token::Literal::Nil => Ok(Value::Nil),
             },
-            ValExpr::Grouping { expr } => expr.eval(env),
+            ValExpr::Grouping { expr } => expr.eval(env, arena),
             ValExpr::Unary { operator, right } => {
-                let value = right.eval_cloned(env)?;
+                let value = right.eval_cloned(env, arena)?;
                 match operator.tok {
                     token::UnaryOp::Minus => value.minus(),
                     token::UnaryOp::Not => value.not(),
@@ -127,8 +135,8 @@ impl ValExpr {
                 operator,
                 right,
             } => {
-                let lhs = left.eval_cloned(env)?;
-                let rhs = right.eval_cloned(env)?;
+                let lhs = left.eval_cloned(env, arena)?;
+                let rhs = right.eval_cloned(env, arena)?;
 
                 let lname = lhs.name();
                 let rname = rhs.name();
@@ -153,7 +161,7 @@ impl ValExpr {
                 ))
             }
             ValExpr::Logical { left, kind, right } => {
-                let lhs = left.eval_cloned(env)?;
+                let lhs = left.eval_cloned(env, arena)?;
 
                 match (&kind.tok, lhs.truthiness()) {
                     (token::LogicalOp::And, false) => return Ok(lhs),
@@ -161,24 +169,24 @@ impl ValExpr {
                     (_, _) => (),
                 };
 
-                right.eval_cloned(env)
+                right.eval_cloned(env, arena)
             }
             ValExpr::Call { callee, loc, args } => {
-                let callee = callee.eval_cloned(env)?;
+                let callee = callee.eval_cloned(env, arena)?;
                 let args = args
                     .into_iter()
-                    .map(|a| a.eval_cloned(env))
+                    .map(|a| a.eval_cloned(env, arena))
                     .collect::<Result<Box<[_]>, _>>()?;
 
                 match callee {
                     Value::Function(mut expr) => {
                         let mut new_env = env.child();
-                        let result = expr.call(args, &mut new_env)?;
+                        let result = expr.call(args, &mut new_env, arena)?;
                         Ok(result)
                     }
                     Value::NativeFunction(mut expr) => {
                         let mut new_env = env.child();
-                        let result = expr.call(args, &mut new_env)?;
+                        let result = expr.call(args, &mut new_env, arena)?;
                         Ok(result)
                     }
                     _ => Err(RuntimeError::NotCallable(*loc)),
@@ -189,21 +197,26 @@ impl ValExpr {
 }
 
 impl RefExpr {
-    pub fn eval<'a>(&self, env: &'a mut Env) -> Result<RefMut<'a, Value>, RuntimeError> {
+    pub fn eval<'a>(
+        &self,
+        env: &'a mut Env,
+        arena: &Rodeo,
+    ) -> Result<RefMut<'a, Value>, RuntimeError> {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
-            } => env
-                .get(&tok.name)
-                .ok_or(RuntimeError::UndefinedVariable(*loc, tok.name.clone())),
-            RefExpr::Grouping { expr } => expr.eval(env),
+            } => env.get(&tok.name).ok_or_else(|| {
+                let var_name = arena.resolve(&tok.name);
+                RuntimeError::UndefinedVariable(*loc, var_name.to_string())
+            }),
+            RefExpr::Grouping { expr } => expr.eval(env, arena),
             RefExpr::Assignment { var, value } => {
-                let value = value.eval_cloned(env)?;
+                let value = value.eval_cloned(env, arena)?;
                 env.get(&var.tok.name)
-                    .ok_or(RuntimeError::UndefinedVariable(
-                        var.loc,
-                        var.tok.name.clone(),
-                    ))
+                    .ok_or_else(|| {
+                        let var_name = arena.resolve(&var.tok.name);
+                        RuntimeError::UndefinedVariable(var.loc, var_name.to_string())
+                    })
                     .map(|mut v| {
                         *v = value;
                         v
@@ -292,14 +305,18 @@ impl Debug for ValExpr {
     }
 }
 
+// TODO: remove these impl for Display and Debug then replace with proper conversion from Spur
+
 impl Display for RefExpr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, .. },
-            } => write!(f, "(var {})", tok.name),
+            } => write!(f, "(var spur|{}|)", tok.name.into_inner()),
             RefExpr::Grouping { expr } => Display::fmt(&expr, f),
-            RefExpr::Assignment { var, value } => write!(f, "(= {} {})", var.tok.name, value),
+            RefExpr::Assignment { var, value } => {
+                write!(f, "(= spur|{}| {})", var.tok.name.into_inner(), value)
+            }
         }
     }
 }
@@ -309,10 +326,16 @@ impl Debug for RefExpr {
         match self {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
-            } => write!(f, "(var{} {})", loc, tok.name),
+            } => write!(f, "(var{} spur|{}|)", loc, tok.name.into_inner()),
             RefExpr::Grouping { expr } => Debug::fmt(&expr, f),
             RefExpr::Assignment { var, value } => {
-                write!(f, "(={} {} {:?})", var.loc, var.tok.name, value)
+                write!(
+                    f,
+                    "(={} spur|{}| {:?})",
+                    var.loc,
+                    var.tok.name.into_inner(),
+                    value
+                )
             }
         }
     }

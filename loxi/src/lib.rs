@@ -46,8 +46,11 @@ pub enum RunMode {
 }
 
 pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
+    let mut interpreter = Interpreter::new();
+    let str_arena = interpreter.arena();
+
     // lexing
-    let lexer = Lexer::new(program);
+    let lexer = Lexer::new(program, str_arena);
     let ScanResult {
         lines,
         tokens,
@@ -98,7 +101,6 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     }
 
     // interpreting
-    let mut interpreter = Interpreter::new();
     let _ = interpreter.interpret(program).map_err(|err| {
         print_context(&lines, err.loc());
         println_red!("{}", err);
@@ -131,7 +133,7 @@ pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
     Ok(())
 }
 
-// FIXME: current not working like a REPL
+// FIXME: currently not working like a REPL
 pub fn run_prompt() -> io::Result<()> {
     println!("Loxi: a Lox programming language interpreter (currently under construction)");
 

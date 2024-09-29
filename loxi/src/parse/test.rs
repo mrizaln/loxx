@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use indoc::indoc;
+use lasso::Rodeo;
 
 use crate::lex::Lexer;
 use crate::parse::Parser;
@@ -105,7 +106,8 @@ fn print_expr_tree() {
 
 #[test]
 fn parse_to_a_correct_ast() {
-    let lexer = Lexer::new(EXPRESSION);
+    let mut arena = Rodeo::default();
+    let lexer = Lexer::new(EXPRESSION, &mut arena);
     let result = lexer.scan();
 
     assert!(result.errors.is_empty());

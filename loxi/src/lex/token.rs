@@ -1,3 +1,5 @@
+use lasso::Spur;
+
 use crate::util::Token;
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -184,16 +186,17 @@ impl TryFrom<&str> for Keyword {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
-    String(String),
-    Identifier(String),
+    String(Spur),
+    Identifier(Spur),
     Number(f64),
 }
 
+// TODO: remove this impl and create a proper conversion to String using the lasso::RodeoReader
 impl Into<String> for &Literal {
     fn into(self) -> String {
         match self {
-            Literal::String(str) => str.clone(),
-            Literal::Identifier(ident) => ident.clone(),
+            Literal::String(spur) => format!("spur|{}|", spur.into_inner()),
+            Literal::Identifier(spur) => format!("spur|{}|", spur.into_inner()),
             Literal::Number(num) => format!("{num}"),
         }
     }

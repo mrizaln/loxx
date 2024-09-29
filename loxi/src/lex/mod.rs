@@ -1,6 +1,8 @@
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::Peekable;
 use std::str::CharIndices;
+
+use lasso::{Rodeo, Spur};
 use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
 
@@ -97,10 +99,11 @@ pub enum LexError {
 }
 
 #[derive(Debug)]
-pub struct Lexer<'a> {
+pub struct Lexer<'a, 'b> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,
     lines: Vec<&'a str>,
+    str_arena: &'b mut Rodeo,
     tokens: Vec<Token>,
     errors: Vec<LexError>,
     line: LineLocation,
@@ -113,12 +116,13 @@ pub struct ScanResult<'a> {
     pub errors: Vec<LexError>,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(program: &'a str) -> Self {
-        Lexer {
+impl<'a, 'b> Lexer<'a, 'b> {
+    pub fn new(program: &'a str, str_arena: &'b mut Rodeo) -> Self {
+        Self {
             source: program,
             chars: program.char_indices().peekable(),
             lines: Vec::new(),
+            str_arena,
             tokens: Vec::new(),
             errors: Vec::new(),
             line: LineLocation {
@@ -219,10 +223,10 @@ impl<'a> Lexer<'a> {
 
         match index {
             Some(idx) => {
-                let value = self.source[current + 1..idx].to_string();
-                self.add_token(tok! {
-                    [start] -> Literal::String = value
-                });
+                let value = &self.source[current + 1..idx];
+                let string = util::generate_string_literal_identifier(value);
+                let spur = self.intern(&string);
+                self.add_token(tok!([start] -> Literal::String = spur));
             }
             None => self.add_error(LexError::UnterminatedString(start)),
         }
@@ -280,11 +284,12 @@ impl<'a> Lexer<'a> {
             }
         });
         let end = current + count + single.len_utf8();
-        let value = self.source[current..end].to_string();
+        let value = &self.source[current..end];
+        let spur = self.intern(value);
 
-        let token = match token::Keyword::try_from(value.as_str()) {
+        let token = match token::Keyword::try_from(value) {
             Ok(keyword) => tok! { [start] -> Keyword = keyword },
-            Err(_) => tok! { [start] -> Literal::Identifier = value },
+            Err(_) => tok! { [start] -> Literal::Identifier = spur },
         };
 
         self.add_token(token);
@@ -300,8 +305,9 @@ impl<'a> Lexer<'a> {
             false => !ch.is_whitespace(),
         });
         let end = current + count + single.len_utf8();
-        let value = self.source[current..end].to_string();
-        self.add_token(tok! { [start] -> Literal::Identifier = value });
+        let value = &self.source[current..end];
+        let spur = self.intern(value);
+        self.add_token(tok! { [start] -> Literal::Identifier = spur});
     }
 
     fn other_handler(&mut self, single: char) {
@@ -336,6 +342,10 @@ impl<'a> Lexer<'a> {
             single,
             single as u32,
         ));
+    }
+
+    fn intern(&mut self, str: &str) -> Spur {
+        self.str_arena.get_or_intern(str)
     }
 
     fn add_token(&mut self, token: Token) {

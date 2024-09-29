@@ -2,6 +2,8 @@ use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use lasso::Spur;
+
 use super::value::Value;
 
 // inspired by: https://stackoverflow.com/a/48298865/16506263
@@ -10,7 +12,7 @@ pub struct Env {
 }
 
 struct Node {
-    values: RefCell<HashMap<String, Value>>,
+    values: RefCell<HashMap<Spur, Value>>,
     parent: Env,
 }
 
@@ -34,7 +36,7 @@ impl Env {
         }
     }
 
-    pub fn define(&self, key: String, value: Value) {
+    pub fn define(&self, key: Spur, value: Value) {
         self.inner
             .as_ref()
             .unwrap()
@@ -43,7 +45,18 @@ impl Env {
             .insert(key, value);
     }
 
-    pub fn get(&self, key: &str) -> Option<RefMut<'_, Value>> {
+    pub fn define_parentmost(&self, key: Spur, value: Value) {
+        let mut env = self;
+        loop {
+            let node = env.inner.as_ref().unwrap();
+            if let None = node.parent.inner {
+                break env.define(key, value);
+            }
+            env = &node.parent;
+        }
+    }
+
+    pub fn get(&self, key: &Spur) -> Option<RefMut<'_, Value>> {
         // lookup at the current node
         let values = self.inner.as_ref()?.values.borrow_mut();
         let value = RefMut::filter_map(values, |values| values.get_mut(key));
@@ -66,33 +79,41 @@ impl Clone for Env {
 
 #[cfg(test)]
 mod test {
+    use lasso::Rodeo;
+
     use super::*;
 
     #[test]
     fn env_has_parent() {
         let clone = |v: RefMut<'_, Value>| v.clone();
 
+        let mut arena = Rodeo::default();
+        let mut intern = |str| arena.get_or_intern(str);
+
         let parent = Env::new();
-        parent.define("a".to_string(), Value::Number(1.0));
-        assert_eq!(parent.get("a").map(clone), Some(Value::Number(1.0)));
+        parent.define(intern("a"), Value::Number(1.0));
+        assert_eq!(
+            parent.get(&intern("a")).map(clone),
+            Some(Value::Number(1.0))
+        );
 
         let child = parent.child();
-        child.define("b".to_string(), Value::Number(2.0));
-        assert_eq!(child.get("a").map(clone), Some(Value::Number(1.0)));
-        assert_eq!(child.get("b").map(clone), Some(Value::Number(2.0)));
+        child.define(intern("b"), Value::Number(2.0));
+        assert_eq!(child.get(&intern("a")).map(clone), Some(Value::Number(1.0)));
+        assert_eq!(child.get(&intern("b")).map(clone), Some(Value::Number(2.0)));
 
-        let one = borrow1(&child);
-        let two = borrow2(&child);
+        let one = borrow1(&child, &arena);
+        let two = borrow2(&child, &arena);
 
         assert_eq!(one, Value::Number(1.0));
         assert_eq!(two, Value::Number(2.0));
     }
 
-    fn borrow1(env: &Env) -> Value {
-        env.get("a").unwrap().clone()
+    fn borrow1(env: &Env, arena: &Rodeo) -> Value {
+        env.get(&arena.get("a").unwrap()).unwrap().clone()
     }
 
-    fn borrow2(env: &Env) -> Value {
-        env.get("b").unwrap().clone()
+    fn borrow2(env: &Env, arena: &Rodeo) -> Value {
+        env.get(&arena.get("b").unwrap()).unwrap().clone()
     }
 }

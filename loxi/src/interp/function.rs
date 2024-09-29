@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 
+use lasso::{Rodeo, Spur};
 use thiserror::Error;
 
 use crate::parse::stmt::Stmt;
@@ -11,14 +12,19 @@ use super::{env::Env, value::Value};
 /// For anything callable in Lox
 pub trait Callable {
     fn arity(&self) -> usize;
-    fn call(&mut self, args: Box<[Value]>, env: &mut Env) -> Result<Value, RuntimeError>;
+    fn call(
+        &mut self,
+        args: Box<[Value]>,
+        env: &mut Env,
+        arena: &Rodeo,
+    ) -> Result<Value, RuntimeError>;
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Function {
-    pub name: String,
-    pub params: Box<[String]>,
-    pub body: Vec<Stmt>,
+    pub name: Spur,
+    pub params: Box<[Spur]>,
+    pub body: Box<[Stmt]>,
     pub loc: Location,
 }
 
@@ -41,7 +47,7 @@ impl FunctionError {
 }
 
 impl Function {
-    pub fn new(name: String, params: Box<[String]>, body: Vec<Stmt>, loc: Location) -> Self {
+    pub fn new(name: Spur, params: Box<[Spur]>, body: Box<[Stmt]>, loc: Location) -> Self {
         Self {
             name,
             params,
@@ -57,7 +63,12 @@ impl Callable for Function {
         self.params.len()
     }
 
-    fn call(&mut self, args: Box<[Value]>, env: &mut Env) -> Result<Value, RuntimeError> {
+    fn call(
+        &mut self,
+        args: Box<[Value]>,
+        env: &mut Env,
+        arena: &Rodeo,
+    ) -> Result<Value, RuntimeError> {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: self.loc,
@@ -72,24 +83,24 @@ impl Callable for Function {
         }
 
         for stmt in self.body.iter() {
-            stmt.execute(env)?;
+            stmt.execute(env, arena)?;
         }
 
         Ok(Value::Nil)
     }
 }
 
-type NativeFn = fn(args: Box<[Value]>, env: &mut Env) -> Result<Value, RuntimeError>;
+type NativeFn = fn(args: Box<[Value]>, env: &mut Env, arena: &Rodeo) -> Result<Value, RuntimeError>;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct NativeFunction {
-    pub name: String,
-    pub params: Box<[String]>,
+    pub name: Spur,
+    pub params: Box<[Spur]>,
     pub body: NativeFn,
 }
 
 impl NativeFunction {
-    pub fn new(name: String, params: Box<[String]>, body: NativeFn) -> Self {
+    pub fn new(name: Spur, params: Box<[Spur]>, body: NativeFn) -> Self {
         Self { name, params, body }
     }
 }
@@ -99,7 +110,12 @@ impl Callable for NativeFunction {
         self.params.len()
     }
 
-    fn call(&mut self, args: Box<[Value]>, env: &mut Env) -> Result<Value, RuntimeError> {
+    fn call(
+        &mut self,
+        args: Box<[Value]>,
+        env: &mut Env,
+        arena: &Rodeo,
+    ) -> Result<Value, RuntimeError> {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: Location::new(0, 0),
@@ -109,6 +125,6 @@ impl Callable for NativeFunction {
             .into());
         }
 
-        (self.body)(args, env)
+        (self.body)(args, env, arena)
     }
 }
