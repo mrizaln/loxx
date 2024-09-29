@@ -10,5 +10,6 @@ unicode = []
 [dependencies]
 clap = { version = "4.5.17", features = ["derive"] }
 indoc = "2.0.5"
+lasso = "0.7.3"
 thiserror = "1.0.63"
 unicode-width = "0.1.13"

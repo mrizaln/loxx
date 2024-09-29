@@ -5,3 +5,6 @@ members = [
     "loxi",
     "loxii",
 ]
+
+[profile.release]
+debug = 1

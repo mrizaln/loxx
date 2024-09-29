@@ -1,5 +1,7 @@
 use std::fmt::{Debug, Display};
 
+use lasso::{Rodeo, Spur};
+
 use crate::interp::env::Env;
 use crate::interp::value::Value;
 use crate::interp::RuntimeError;
@@ -18,7 +20,7 @@ pub enum Stmt {
     },
     Var {
         loc: Location,
-        name: String,
+        name: Spur,
         init: Option<Expr>,
     },
     Block {
@@ -38,10 +40,10 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    pub fn execute(&self, env: &mut Env) -> Result<(), RuntimeError> {
+    pub fn execute(&self, env: &mut Env, arena: &Rodeo) -> Result<(), RuntimeError> {
         match self {
-            Stmt::Expr { expr } => expr.eval_unit(env)?,
-            Stmt::Print { expr, .. } => expr.eval_fn(env, |v| println!("{}", v))?,
+            Stmt::Expr { expr } => expr.eval_unit(env, arena)?,
+            Stmt::Print { expr, .. } => expr.eval_fn(env, arena, |v| println!("{}", v))?,
             Stmt::Var { name, init, .. } => {
                 //
                 // there are two ways to implement this if the init is a RefExpr:
@@ -55,7 +57,7 @@ impl Stmt {
                 //      -- 2024/09/19 02:57 [chapter 8.2: global variables]
 
                 let value = match init {
-                    Some(expr) => expr.eval_cloned(env)?,
+                    Some(expr) => expr.eval_cloned(env, arena)?,
                     None => Value::Nil,
                 };
 
@@ -65,7 +67,7 @@ impl Stmt {
             Stmt::Block { statements } => {
                 let mut new_env = env.child();
                 for stmt in statements {
-                    stmt.execute(&mut new_env)?;
+                    stmt.execute(&mut new_env, arena)?;
                 }
             }
             Stmt::If {
@@ -73,19 +75,19 @@ impl Stmt {
                 then,
                 otherwise,
                 ..
-            } => match condition.eval_fn(env, |v| v.truthiness())? {
-                true => then.execute(env)?,
+            } => match condition.eval_fn(env, arena, |v| v.truthiness())? {
+                true => then.execute(env, arena)?,
                 false => {
                     if let Some(stmt) = otherwise {
-                        stmt.execute(env)?
+                        stmt.execute(env, arena)?
                     }
                 }
             },
             Stmt::While {
                 condition, body, ..
             } => {
-                while condition.eval_fn(env, |v| v.truthiness())? {
-                    body.execute(env)?
+                while condition.eval_fn(env, arena, |v| v.truthiness())? {
+                    body.execute(env, arena)?
                 }
             }
         };
@@ -94,14 +96,16 @@ impl Stmt {
     }
 }
 
+// TODO: remove these impl for Display and Debug then replace with proper conversion from Spur
+
 impl Display for Stmt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::Expr { expr } => Display::fmt(&expr, f),
             Stmt::Print { expr, .. } => write!(f, "(print {expr})"),
             Stmt::Var { name, init, .. } => match init {
-                Some(val) => write!(f, "(var {name} {val})"),
-                None => write!(f, "(var {name} nil)"),
+                Some(val) => write!(f, "(var spur|{}| {val})", name.into_inner()),
+                None => write!(f, "(var spur|{}| nil)", name.into_inner()),
             },
             Stmt::Block { statements } => {
                 write!(f, "(block")?;
@@ -132,8 +136,8 @@ impl Debug for Stmt {
             Stmt::Expr { expr } => Debug::fmt(&expr, f),
             Stmt::Print { loc, expr } => write!(f, "(print{loc} {expr:?})"),
             Stmt::Var { loc, name, init } => match init {
-                Some(val) => write!(f, "(var{loc} {name} {val:?})"),
-                None => write!(f, "(var{loc} {name} nil)"),
+                Some(val) => write!(f, "(var{loc} spur|{}| {val:?})", name.into_inner()),
+                None => write!(f, "(var{loc} spur|{}| nil)", name.into_inner()),
             },
             Stmt::Block { statements } => {
                 write!(f, "(block")?;

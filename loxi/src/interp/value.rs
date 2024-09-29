@@ -1,4 +1,6 @@
 use std::fmt::{Debug, Display};
+use std::ops::Deref;
+use std::rc::Rc;
 
 use super::{
     function::{Function, NativeFunction},
@@ -6,15 +8,15 @@ use super::{
 };
 
 // TODO: use Rc for heavy object (String and LoxObject)
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(PartialEq, PartialOrd)]
 pub enum Value {
     Nil,
     Bool(bool),
     Number(f64),
-    String(String),
     Function(Function),
     NativeFunction(NativeFunction),
-    Object(Object),
+    String(Rc<String>),
+    Object(Rc<Object>),
 }
 
 impl Value {
@@ -41,7 +43,11 @@ impl Value {
     pub fn add(self, other: Self) -> Option<Value> {
         match (self, other) {
             (Value::Number(num1), Value::Number(num2)) => Some(Value::Number(num1 + num2)),
-            (Value::String(str1), Value::String(str2)) => Some(Value::String(str1 + &str2)),
+            (Value::String(str1), Value::String(str2)) => {
+                let mut new_str = str1.deref().clone();
+                new_str.push_str(str2.deref().as_str());
+                Some(Value::String(Rc::new(new_str)))
+            }
             _ => None,
         }
     }
@@ -123,16 +129,34 @@ impl Value {
     }
 }
 
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        match self {
+            Value::Nil => Value::Nil,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Number(num) => Value::Number(*num),
+            Value::Function(fun) => Value::Function(fun.clone()),
+            Value::NativeFunction(fun) => Value::NativeFunction(fun.clone()),
+            Value::String(str) => Value::String(Rc::clone(str)),
+            Value::Object(obj) => Value::Object(Rc::clone(obj)),
+        }
+    }
+}
+
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Nil => write!(f, "Nil"),
             Value::Bool(b) => write!(f, "Bool({b})"),
             Value::Number(num) => write!(f, "Number({num})"),
-            Value::String(str) => write!(f, "String({str})"),
+            Value::String(str) => write!(f, "String({})", str.deref()),
             Value::Object(_) => write!(f, "Object(<dummy>)"),
-            Value::Function(Function { name, .. }) => write!(f, "Function({name})"),
-            Value::NativeFunction(NativeFunction { name, .. }) => write!(f, "Function({name})"),
+            Value::Function(Function { name, .. }) => {
+                write!(f, "Function(spur|{}|)", name.into_inner())
+            }
+            Value::NativeFunction(NativeFunction { name, .. }) => {
+                write!(f, "Function(spur|{}|)", name.into_inner())
+            }
         }
     }
 }
@@ -143,10 +167,14 @@ impl Display for Value {
             Value::Nil => write!(f, "nil"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Number(num) => write!(f, "{num}"),
-            Value::String(str) => write!(f, "{str}"),
+            Value::String(str) => write!(f, "{}", str.deref()),
             Value::Object(_) => write!(f, "<object>"),
-            Value::Function(Function { name, .. }) => write!(f, "<fun {name}>"),
-            Value::NativeFunction(NativeFunction { name, .. }) => write!(f, "<fun {name}>"),
+            Value::Function(Function { name, .. }) => {
+                write!(f, "<fun spur|{}|>", name.into_inner())
+            }
+            Value::NativeFunction(NativeFunction { name, .. }) => {
+                write!(f, "<fun spur|{}|>", name.into_inner())
+            }
         }
     }
 }

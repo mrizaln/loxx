@@ -1,3 +1,4 @@
+use lasso::Rodeo;
 use thiserror::Error;
 
 use crate::parse::{token, Program};
@@ -44,35 +45,46 @@ impl RuntimeError {
 
 pub struct Interpreter {
     environment: Env,
+    str_arena: Rodeo,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut env = Env::new();
-        Self::populate_env(&mut env);
-        Interpreter { environment: env }
+        let mut interp = Interpreter {
+            environment: Env::new(),
+            str_arena: Rodeo::new(),
+        };
+        interp.populate_env();
+        interp
+    }
+
+    pub fn arena(&mut self) -> &mut Rodeo {
+        &mut self.str_arena
     }
 
     pub fn interpret(&mut self, program: Program) -> Result<(), RuntimeError> {
         let env = &mut self.environment;
         for stmt in program.statements.into_iter() {
-            stmt.execute(env)?
+            stmt.execute(env, &self.str_arena)?
         }
         Ok(())
     }
 
-    fn populate_env(env: &mut Env) {
-        let clock = NativeFunction::new("clock".into(), Box::new([]), native_functions::clock);
-        env.define(clock.name.clone(), Value::NativeFunction(clock));
+    fn populate_env(&mut self) {
+        let name = self.str_arena.get_or_intern("clock");
+        let clock = NativeFunction::new(name, Box::new([]), native_functions::clock);
+        self.environment.define(name, Value::NativeFunction(clock));
     }
 }
 
 mod native_functions {
-    use super::env::Env;
-    use super::value::Value;
-    use super::RuntimeError;
+    use super::*;
 
-    pub fn clock(_args: Box<[Value]>, _env: &mut Env) -> Result<Value, RuntimeError> {
+    pub fn clock(
+        _args: Box<[Value]>,
+        _env: &mut Env,
+        _arena: &Rodeo,
+    ) -> Result<Value, RuntimeError> {
         let now = std::time::SystemTime::now();
         let seconds = now
             .duration_since(std::time::UNIX_EPOCH)

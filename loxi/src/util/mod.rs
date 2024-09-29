@@ -56,3 +56,18 @@ pub fn to_str<'a, const M: usize, const N: usize>(
 pub unsafe fn sigtrap() {
     std::arch::asm!("int3")
 }
+
+/// string literal has a generated identifier in the form of:
+/// `__loxx__string_literal__<string>__`
+pub fn generate_string_literal_identifier(s: &str) -> String {
+    format!("__loxx__string_literal__{}__", s)
+}
+
+/// extract the string from the string literal identifier
+pub fn extract_string_literal_identifier(s: &str) -> Option<&str> {
+    if s.starts_with("__loxx__string_literal__") && s.ends_with("__") {
+        Some(&s[24..s.len() - 2])
+    } else {
+        None
+    }
+}
