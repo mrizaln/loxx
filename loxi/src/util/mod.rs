@@ -14,6 +14,11 @@ pub struct Location {
     pub line: usize,
     pub column: usize,
 }
+impl Location {
+    pub(crate) fn new(line: usize, column: usize) -> Self {
+        Self { line, column }
+    }
+}
 
 impl Display for Location {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

@@ -3,9 +3,10 @@ use std::fmt::{Debug, Display};
 
 use super::token;
 use crate::interp::env::Env;
+use crate::interp::function::Callable;
 use crate::interp::value::Value;
 use crate::interp::RuntimeError;
-use crate::util::TokLoc;
+use crate::util::{Location, TokLoc};
 
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
@@ -36,6 +37,11 @@ pub enum ValExpr {
         kind: TokLoc<token::LogicalOp>,
         right: Box<Expr>,
     },
+    Call {
+        callee: Box<Expr>,
+        args: Box<[Expr]>,
+        loc: Location,
+    },
 }
 
 /// Expression that produces a reference to `Value`
@@ -54,6 +60,10 @@ pub enum RefExpr {
 }
 
 impl Expr {
+    /// Lox has maximum number of arguments for its functions, because the original implementation
+    /// is in Java and it's limited there to 255 arguments only.
+    pub const MAX_FUNC_ARGS: usize = 255;
+
     /// Evaluate `Expr` as if it produces a `&mut Value`. The reference can only be used in `f`.
     pub fn eval_fn<R, F>(&self, env: &mut Env, f: F) -> Result<R, RuntimeError>
     where
@@ -78,9 +88,14 @@ impl Expr {
     /// Evaluate the expression without returning a value.
     pub fn eval_unit(&self, env: &mut Env) -> Result<(), RuntimeError> {
         match self {
-            Expr::ValExpr(expr) => expr.eval(env).map(|_| ()),
-            Expr::RefExpr(expr) => expr.eval(env).map(|_| ()),
+            Expr::ValExpr(expr) => {
+                expr.eval(env)?;
+            }
+            Expr::RefExpr(expr) => {
+                expr.eval(env)?;
+            }
         }
+        Ok(())
     }
 }
 
@@ -148,6 +163,27 @@ impl ValExpr {
 
                 right.eval_cloned(env)
             }
+            ValExpr::Call { callee, loc, args } => {
+                let callee = callee.eval_cloned(env)?;
+                let args = args
+                    .into_iter()
+                    .map(|a| a.eval_cloned(env))
+                    .collect::<Result<Box<[_]>, _>>()?;
+
+                match callee {
+                    Value::Function(mut expr) => {
+                        let mut new_env = env.child();
+                        let result = expr.call(args, &mut new_env)?;
+                        Ok(result)
+                    }
+                    Value::NativeFunction(mut expr) => {
+                        let mut new_env = env.child();
+                        let result = expr.call(args, &mut new_env)?;
+                        Ok(result)
+                    }
+                    _ => Err(RuntimeError::NotCallable(*loc)),
+                }
+            }
         }
     }
 }
@@ -201,6 +237,15 @@ impl Display for ValExpr {
                 let op: &str = (&kind.tok).into();
                 format!("({op} {left} {right})")
             }
+            ValExpr::Call { callee, args, .. } => {
+                let mut string = format!("(call {callee} ");
+                string.push_str("(args");
+                for expr in args {
+                    string = string + &format!(" {expr}");
+                }
+                string.push_str("))");
+                string
+            }
         };
         write!(f, "{}", string)
     }
@@ -232,6 +277,15 @@ impl Debug for ValExpr {
             ValExpr::Logical { left, kind, right } => {
                 let op: &str = (&kind.tok).into();
                 format!("({op}{} {left:?} {right:?})", kind.loc)
+            }
+            ValExpr::Call { callee, loc, args } => {
+                let mut string = format!("(call{loc} {callee:?} ");
+                string.push_str("(args");
+                for expr in args {
+                    string = string + &format!(" {expr:?}");
+                }
+                string.push_str("))");
+                string
             }
         };
         write!(f, "{}", string)

@@ -1,5 +1,10 @@
 use std::fmt::{Debug, Display};
 
+use super::{
+    function::{Function, NativeFunction},
+    object::Object,
+};
+
 // TODO: use Rc for heavy object (String and LoxObject)
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Value {
@@ -7,12 +12,10 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(String),
+    Function(Function),
+    NativeFunction(NativeFunction),
     Object(Object),
 }
-
-// TODO: create the actual object
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Object {}
 
 impl Value {
     /// follows Ruby's simple rule: `false` and `nil` are falsy, everything else truthy
@@ -114,6 +117,8 @@ impl Value {
             Value::Number(_) => "<number>",
             Value::String(_) => "<string>",
             Value::Object(_) => "<object>",
+            Value::Function(_) => "<function>",
+            Value::NativeFunction(_) => "<function>",
         }
     }
 }
@@ -126,6 +131,8 @@ impl Debug for Value {
             Value::Number(num) => write!(f, "Number({num})"),
             Value::String(str) => write!(f, "String({str})"),
             Value::Object(_) => write!(f, "Object(<dummy>)"),
+            Value::Function(Function { name, .. }) => write!(f, "Function({name})"),
+            Value::NativeFunction(NativeFunction { name, .. }) => write!(f, "Function({name})"),
         }
     }
 }
@@ -138,6 +145,8 @@ impl Display for Value {
             Value::Number(num) => write!(f, "{num}"),
             Value::String(str) => write!(f, "{str}"),
             Value::Object(_) => write!(f, "<object>"),
+            Value::Function(Function { name, .. }) => write!(f, "<fun {name}>"),
+            Value::NativeFunction(NativeFunction { name, .. }) => write!(f, "<fun {name}>"),
         }
     }
 }

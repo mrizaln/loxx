@@ -64,7 +64,11 @@ pub mod token;
 ///
 /// factor      -> unary ( ( "/" | "*" ) unary )* ;
 ///
-/// unary       -> ( "!" | "-" ) unary | primary ;
+/// unary       -> ( "!" | "-" ) unary | call ;
+///
+/// call        -> primary ( "(" arguments? ")" )* ;
+///
+/// arguments   -> expression ( "," expression )* ;
 ///
 /// primary     -> NUMBER
 ///                 | STRING
@@ -90,6 +94,13 @@ pub enum SyntaxError {
         delim: &'static str,
         start: Location,
     },
+
+    #[error("{loc} SyntaxError: Number of arguments exceed language limit ({num} exceed {limit})")]
+    TooManyArguments {
+        num: usize,
+        limit: usize,
+        loc: Location,
+    },
 }
 
 impl SyntaxError {
@@ -97,6 +108,7 @@ impl SyntaxError {
         match self {
             SyntaxError::Expect { loc, .. } => *loc,
             SyntaxError::MissingDelim { start, .. } => *start,
+            SyntaxError::TooManyArguments { loc, .. } => *loc,
         }
     }
 }
@@ -108,6 +120,14 @@ pub enum ParseError {
 }
 
 impl ParseError {
+    pub fn too_many_args(num: usize, loc: Location) -> ParseError {
+        ParseError::SyntaxError(SyntaxError::TooManyArguments {
+            num,
+            limit: Expr::MAX_FUNC_ARGS,
+            loc,
+        })
+    }
+
     /// Convert the variant to ParseError::SyntaxError(SyntaxError::Expect)
     pub fn syntax_err(self, expect: &'static str) -> Self {
         match self {
@@ -468,7 +488,61 @@ impl Parser {
                 right: self.unary()?,
             })))
         } else {
-            self.primary()
+            self.call()
+        }
+    }
+
+    fn call(&mut self) -> ExprResult {
+        let mut expr = self.primary()?;
+
+        loop {
+            match self.peek()? {
+                is_tok!(Punctuation::ParenLeft) => Ok({
+                    let loc = self.advance().unwrap().loc();
+                    expr = self.finish_call(loc, expr)?;
+                }),
+                _ => break,
+            }?;
+        }
+
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, loc: Location, callee: Box<Expr>) -> ExprResult {
+        // zero argument
+        if let is_tok!(Punctuation::ParenRight) = self.peek()? {
+            self.advance();
+            return Ok(Box::new(val_expr!(Call {
+                callee,
+                args: Box::new([]),
+                loc,
+            })));
+        }
+
+        // one or more arguments
+        let mut arguments = Vec::new();
+        loop {
+            arguments.push(*self.expression()?);
+            match self.peek()? {
+                is_tok!(Punctuation::Comma) => {
+                    self.advance();
+                    continue;
+                }
+                _ => break,
+            }
+        }
+
+        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+
+        // NOTE: in the lox book, this arguments number check is done using >= instead of >
+        if arguments.len() > Expr::MAX_FUNC_ARGS {
+            Err(ParseError::too_many_args(arguments.len(), loc))
+        } else {
+            Ok(Box::new(val_expr!(Call {
+                callee,
+                args: arguments.into_boxed_slice(),
+                loc,
+            })))
         }
     }
 
