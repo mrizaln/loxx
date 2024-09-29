@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from os.path import realpath, dirname
 from pathlib import Path
-from subprocess import DEVNULL, run
+from subprocess import DEVNULL, CalledProcessError, TimeoutExpired, run
 from typing import Dict, Generator, List, Self, Tuple
 import fnmatch
 import re
@@ -64,8 +64,8 @@ class Exe:
 
 
 class Interpreter(Enum):
-    LOXI = Exe("loxi", Variant.TREE_WALK, Binary(DIR / "target" / "debug" / "loxi"))
-    LOXII = Exe("loxii", Variant.BYTECODE, Binary(DIR / "target" / "debug" / "loxii"))
+    LOXI = Exe("loxi", Variant.TREE_WALK, Binary(DIR / "target" / "release" / "loxi"))
+    LOXII = Exe("loxii", Variant.BYTECODE, Binary(DIR / "target" / "release" / "loxii"))
 
 
 @dataclass
@@ -74,7 +74,7 @@ class Filter:
     invert: bool
 
     def match(self, path: Path) -> bool:
-        match = self.pat.match(str(path.relative_to(DIR))) is not None
+        match = self.pat.match(str(path)) is not None
         return not match if self.invert else match
 
 
@@ -207,6 +207,21 @@ class Cm:
         return "\x1b[u"
 
 
+# pretty print stdoand stderr
+def pprint(stdout: str, stderr: str):
+    def strip(s: str):
+        s = s.rstrip()
+        return " " if len(s) == 0 else s
+
+    width = 100
+    print("┌─── [stdout]", "─" * (width - 13), sep="")
+    print(textwrap.indent(strip(stdout), "│", lambda _: True))
+    print("├─── [stderr]", "─" * (width - 13), sep="")
+    print(textwrap.indent(strip(stderr), "│", lambda _: True))
+    print("└", "─" * (width - 1), sep="")
+    pass
+
+
 class Test:
     @dataclass
     class Expect:
@@ -225,13 +240,13 @@ class Test:
 
     def run_all(self) -> Result:
         tests = TESTS[self.interpreter.value.variant]
-        print(f"\n>>> Running {self.interpreter.value.name} tests")
+        print(f"\n>>> Running {self.interpreter.value.name} tests", flush=True)
 
         done_tests: Dict[Path, bool] = {}
 
         result = Result()
         for suite in tests:
-            print(f"\n- Testing Chapter {suite.chapter.name}")
+            print(f"\n- Testing Chapter {suite.chapter.name}", flush=True)
             match suite.chapter:
                 case Chapter.SCANNING | Chapter.PARSING | Chapter.EVALUATING:
                     print(f"\t- SKIPPED (can only be ran individually)")
@@ -245,10 +260,10 @@ class Test:
 
                 if (done := done_tests.get(test)) is not None:
                     if done:
-                        print(f"\t> {Cs.g("PASSED")} {Cs.y("(cached)")}: {test}")
+                        print(f"\t> {Cs.g("PASSED")} {Cs.y("(cached)")}: {test}", flush=True)
                         result.passed += 1
                     else:
-                        print(f"\t> {Cs.r("FAILED")} {Cs.y("(cached)")}: {test}")
+                        print(f"\t> {Cs.r("FAILED")} {Cs.y("(cached)")}: {test}", flush=True)
                         result.failed += 1
                     continue
 
@@ -265,7 +280,7 @@ class Test:
         return result
 
     def run_chapter(self, chapter: Chapter) -> Result:
-        print(f"\n>>> Running {self.interpreter.value.name} tests")
+        print(f"\n>>> Running {self.interpreter.value.name} tests", flush=True)
         suite = self._suite_from_chapter(chapter)
         result = Result()
 
@@ -274,7 +289,7 @@ class Test:
             result.skipped = 1
             return result
 
-        print(f"\n- Testing Chapter {suite.chapter.name}")
+        print(f"\n- Testing Chapter {suite.chapter.name}", flush=True)
         for test in suite.tests:
             if self.filter is not None and not self.filter.match(test):
                 result.skipped += 1
@@ -305,9 +320,14 @@ class Test:
                 case _:
                     raise TypeError("Not a Binary or Command, did you added new types?")
 
-        print(f"\t> {Cm.s()}running '{test}'", end="")
+        print(f"\t> {Cm.s()}running '{test}'", end="", flush=True)
         exec = args(self.interpreter.value)
-        proc = run(exec + [str(test)], capture_output=True, text=True)
+
+        try:
+            proc = run(exec + [str(test)], capture_output=True, text=True, timeout=10)
+        except TimeoutExpired:
+            print(Cm.u() + Cs.r("TIMEOUT"))
+            return False
 
         stdout = proc.stdout
         stderr = proc.stderr
@@ -321,18 +341,12 @@ class Test:
             return False
 
         if self._validate(test, expect, stdout, stderr, returncode):
-            print(f"{Cm.u()}{Cs.g("PASSED:")}")
+            print(f"{Cm.u()}{Cs.g("PASSED ")}")
             return True
         else:
-            print(f"{Cm.u()}{Cs.r("FAILED:")}")
+            print(f"{Cm.u()}{Cs.r("FAILED ")}")
             [print(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
-            width = 100
-            print("┌─── [stdout]", "─" * (width - 13), sep="")
-            print(textwrap.indent(stdout.rstrip(), "│"))
-            print("├─── [stderr]", "─" * (width - 13), sep="")
-            print(textwrap.indent(stderr.rstrip(), "│"))
-            print("└", "─" * (width - 1), sep="")
-            print()
+            pprint(stdout, stderr)
             return False
 
     def _validate(
@@ -501,7 +515,8 @@ def main() -> int:
             filter = Filter(re.compile(fnmatch.translate(e)), True)
 
     # prepare the interpreters
-    prepare_interpreters()
+    if not prepare_interpreters():
+        return 2
 
     # populate the test cases, this is required
     populate_tests()
@@ -533,23 +548,40 @@ def main() -> int:
 # -----------------------------------------------------------------------------
 
 
-def prepare_interpreters():
+def prepare_interpreters() -> bool:
     """
     You can add anything here that is required to prepare the interpreters like building them.
     The function will be called before `populate_tests()` function.
     """
 
-    print(Cs.y("Preparing interpreters..."), end=' ')
-    print(Cs.g("DONE"))
+    print(Cs.y("Preparing interpreters..."), end=" ", flush=True)
 
     for interpreter in Interpreter:
-        run(
-            ["cargo", "build", "--bin", interpreter.value.name.lower()],
-            cwd=DIR,
-            check=True,
-            stdout=DEVNULL,
-            stderr=DEVNULL,
-        )
+        name = interpreter.value.name.lower()
+        try:
+            run(
+                "cargo --color always build --release --bin".split() + [name],
+                cwd=DIR,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            run(
+                "cargo --color always test --release --package".split() + [name],
+                cwd=DIR,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except CalledProcessError as exc:
+            print(Cs.r(f"FAILED [{exc.returncode}]"))
+            pprint(exc.stdout, exc.stderr)
+
+            return False
+
+    print(Cs.g("DONE"))
+
+    return True
 
 
 def populate_tests():
