@@ -224,8 +224,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
         match index {
             Some(idx) => {
                 let value = &self.source[current + 1..idx];
-                let string = util::generate_string_literal_identifier(value);
-                let spur = self.intern(&string);
+                let spur = self.intern(value);
                 self.add_token(tok!([start] -> Literal::String = spur));
             }
             None => self.add_error(LexError::UnterminatedString(start)),

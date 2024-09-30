@@ -20,14 +20,13 @@ fn hello_test() {
     assert_eq!(result.tokens.len(), 9);
 
     let loc = |l, c| Location { line: l, column: c };
-    let lit = util::generate_string_literal_identifier;
     let mut intern = |str| lex_arena.get_or_intern(str);
 
     let tokens = vec![
         tok! { [loc(1,1)]  -> Keyword::Var },
         tok! { [loc(1,5)]  -> Literal::Identifier = intern("hello") },
         tok! { [loc(1,11)] -> Operator::Equal },
-        tok! { [loc(1,13)] -> Literal::String = intern(&lit("Hello world!")) },
+        tok! { [loc(1,13)] -> Literal::String = intern("Hello world!") },
         tok! { [loc(1,27)] -> Punctuation::Semicolon },
         tok! { [loc(2,1)]  -> Keyword::Print },
         tok! { [loc(2,7)]  -> Literal::Identifier = intern("hello") },

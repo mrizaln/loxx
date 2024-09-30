@@ -2,6 +2,8 @@ use std::fmt::{Debug, Display};
 use std::ops::Deref;
 use std::rc::Rc;
 
+use lasso::{Rodeo, Spur};
+
 use super::{
     function::{Function, NativeFunction},
     object::Object,
@@ -17,6 +19,13 @@ pub enum Value {
     Object(Rc<Object>),
     Function(Rc<Function>),
     NativeFunction(Rc<NativeFunction>),
+
+    /// `StringLiteral` is a special case of string, the value is static.
+    /// It can only produces real `String` if it was operated on.
+    ///
+    /// NOTE: There is no distinction between `String` and string literal in Lox, this is just an
+    ///       optimization.
+    StringLiteral(Spur),
 }
 
 impl Value {
@@ -48,6 +57,10 @@ impl Value {
         Value::NativeFunction(Rc::new(func))
     }
 
+    pub fn string_literal(spur: Spur) -> Self {
+        Value::StringLiteral(spur)
+    }
+
     /// follows Ruby's simple rule: `false` and `nil` are falsy, everything else truthy
     pub fn truthiness(&self) -> bool {
         match self {
@@ -68,12 +81,18 @@ impl Value {
         }
     }
 
-    pub fn add(self, other: Self) -> Option<Value> {
+    pub fn add(self, other: Self, arena: &Rodeo) -> Option<Value> {
         match (self, other) {
             (Value::Number(num1), Value::Number(num2)) => Some(Value::number(num1 + num2)),
             (Value::String(str1), Value::String(str2)) => {
                 let mut new_str = str1.deref().clone();
                 new_str.push_str(str2.deref().as_str());
+                Some(Value::string(new_str))
+            }
+            (Value::String(str1), Value::StringLiteral(spur)) => {
+                let mut new_str = str1.deref().clone();
+                let str2 = arena.resolve(&spur);
+                new_str.push_str(str2);
                 Some(Value::string(new_str))
             }
             _ => None,
@@ -101,19 +120,28 @@ impl Value {
         }
     }
 
-    pub fn eq(&self, other: &Self) -> Option<Value> {
+    pub fn eq(&self, other: &Self, arena: &Rodeo) -> Option<Value> {
         match (self, other) {
             (Value::Nil, Value::Nil) => Some(Value::bool(true)),
             (Value::Bool(b1), Value::Bool(b2)) => Some(Value::bool(b1 == b2)),
             (Value::Number(num1), Value::Number(num2)) => Some(Value::bool(num1 == num2)),
             (Value::String(str1), Value::String(str2)) => Some(Value::bool(str1 == str2)),
             (Value::Object(_), Value::Object(_)) => unimplemented!(),
+            (Value::String(str1), Value::StringLiteral(str2)) => {
+                Some(Value::bool(str1.as_str() == arena.resolve(str2)))
+            }
+            (Value::StringLiteral(str1), Value::String(str2)) => {
+                Some(Value::bool(arena.resolve(str1) == str2.as_str()))
+            }
+            (Value::StringLiteral(str1), Value::StringLiteral(str2)) => {
+                Some(Value::bool(str1 == str2))
+            }
             _ => Some(Value::bool(false)),
         }
     }
 
-    pub fn neq(&self, other: &Self) -> Option<Value> {
-        self.eq(other)?.not()
+    pub fn neq(&self, other: &Self, arena: &Rodeo) -> Option<Value> {
+        self.eq(other, arena)?.not()
     }
 
     pub fn gt(&self, other: &Self) -> Option<Value> {
@@ -153,6 +181,7 @@ impl Value {
             Value::Object(_) => "<object>",
             Value::Function(_) => "<function>",
             Value::NativeFunction(_) => "<function>",
+            Value::StringLiteral(_) => "<string>",
         }
     }
 }
@@ -167,6 +196,7 @@ impl Clone for Value {
             Value::NativeFunction(fun) => Value::NativeFunction(Rc::clone(fun)),
             Value::String(str) => Value::String(Rc::clone(str)),
             Value::Object(obj) => Value::Object(Rc::clone(obj)),
+            Value::StringLiteral(spur) => Value::StringLiteral(*spur),
         }
     }
 }
@@ -185,6 +215,7 @@ impl Debug for Value {
             Value::NativeFunction(func) => {
                 write!(f, "Function(spur|{}|)", func.name.into_inner())
             }
+            Value::StringLiteral(spur) => write!(f, "StringLiteral(spur|{}|)", spur.into_inner()),
         }
     }
 }
@@ -203,6 +234,7 @@ impl Display for Value {
             Value::NativeFunction(func) => {
                 write!(f, "<fun spur|{}|>", func.name.into_inner())
             }
+            Value::StringLiteral(spur) => write!(f, "StringLiteral(spur|{}|)", spur.into_inner()),
         }
     }
 }

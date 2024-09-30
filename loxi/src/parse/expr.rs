@@ -1,6 +1,5 @@
 use std::cell::RefMut;
 use std::fmt::{Debug, Display};
-use std::rc::Rc;
 
 use lasso::Rodeo;
 
@@ -9,7 +8,7 @@ use crate::interp::env::Env;
 use crate::interp::function::Callable;
 use crate::interp::value::Value;
 use crate::interp::RuntimeError;
-use crate::util::{self, Location, TokLoc};
+use crate::util::{Location, TokLoc};
 
 #[derive(Clone, PartialEq, PartialOrd)]
 pub enum Expr {
@@ -107,12 +106,7 @@ impl ValExpr {
         match self {
             ValExpr::Literal { value } => match &value.tok {
                 token::Literal::Number(num) => Ok(Value::number(*num)),
-                token::Literal::String(str) => {
-                    let literal = arena.resolve(str);
-                    let string = util::extract_string_literal_identifier(literal)
-                        .expect("Not a string literal");
-                    Ok(Value::string(string.into()))
-                }
+                token::Literal::String(str) => Ok(Value::string_literal(*str)),
                 token::Literal::True => Ok(Value::bool(true)),
                 token::Literal::False => Ok(Value::bool(false)),
                 token::Literal::Nil => Ok(Value::nil()),
@@ -142,12 +136,12 @@ impl ValExpr {
                 let rname = rhs.name();
 
                 match operator.tok {
-                    token::BinaryOp::Add => lhs.add(rhs),
+                    token::BinaryOp::Add => lhs.add(rhs, arena),
                     token::BinaryOp::Sub => lhs.sub(rhs),
                     token::BinaryOp::Mul => lhs.mul(rhs),
                     token::BinaryOp::Div => lhs.div(rhs),
-                    token::BinaryOp::Equal => lhs.eq(&rhs),
-                    token::BinaryOp::NotEqual => lhs.neq(&rhs),
+                    token::BinaryOp::Equal => lhs.eq(&rhs, arena),
+                    token::BinaryOp::NotEqual => lhs.neq(&rhs, arena),
                     token::BinaryOp::Less => lhs.lt(&rhs),
                     token::BinaryOp::LessEq => lhs.le(&rhs),
                     token::BinaryOp::Greater => lhs.gt(&rhs),
