@@ -9,14 +9,14 @@ MIN_PYTHON = (3, 11)
 if sys.version_info < MIN_PYTHON:
     sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
 
-from argparse import ArgumentParser, RawTextHelpFormatter
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, RawTextHelpFormatter
 from collections.abc import Callable
 from contextlib import chdir
 from dataclasses import dataclass
 from enum import Enum
 from os.path import realpath, dirname
 from pathlib import Path
-from subprocess import DEVNULL, CalledProcessError, TimeoutExpired, run
+from subprocess import CalledProcessError, TimeoutExpired, run
 from typing import Dict, Generator, List, Self, Tuple
 import fnmatch
 import re
@@ -207,6 +207,11 @@ class Cm:
         return "\x1b[u"
 
 
+# print wrapper function that always flushes the output
+def printfl(*args, **kwargs):
+    print(*args, **kwargs, flush=True)
+
+
 # pretty print stdoand stderr
 def pprint(stdout: str, stderr: str):
     def strip(s: str):
@@ -214,12 +219,11 @@ def pprint(stdout: str, stderr: str):
         return " " if len(s) == 0 else s
 
     width = 100
-    print("┌─── [stdout]", "─" * (width - 13), sep="")
-    print(textwrap.indent(strip(stdout), "│", lambda _: True))
-    print("├─── [stderr]", "─" * (width - 13), sep="")
-    print(textwrap.indent(strip(stderr), "│", lambda _: True))
-    print("└", "─" * (width - 1), sep="")
-    pass
+    printfl("┌─── [stdout]", "─" * (width - 13), sep="")
+    printfl(textwrap.indent(strip(stdout), "│", lambda _: True))
+    printfl("├─── [stderr]", "─" * (width - 13), sep="")
+    printfl(textwrap.indent(strip(stderr), "│", lambda _: True))
+    printfl("└", "─" * (width - 1), sep="")
 
 
 class Test:
@@ -231,39 +235,52 @@ class Test:
         compile_error: List[Tuple[int, str]]
         runtime_error: Tuple[int, str] | None
 
-    def __init__(self, interpreter: Interpreter, filter_path: Filter | None):
+    # benchmark Filter, ignore mode
+    BENCHMARK_FILTER = Filter(re.compile(r".*benchmark.*"), True)
+
+    def __init__(
+        self,
+        interpreter: Interpreter,
+        filter_path: Filter | None,
+        run_benchmark: bool = False,
+        print_output: bool = False,
+        timeout_sec: float = -1.0,  # if timeout_ms is zero or less than zero, no timeout will be set
+    ):
         self.interpreter = interpreter
         self.expectations: int = 0
         self.failures: Dict[Path, List[str]] = {}
         self.filter: Filter | None = filter_path
-        pass
+        self.run_benchmark: bool = run_benchmark
+        self.print_output: bool = print_output
+        self.timeout_sec: float = timeout_sec
 
     def run_all(self) -> Result:
         tests = TESTS[self.interpreter.value.variant]
-        print(f"\n>>> Running {self.interpreter.value.name} tests", flush=True)
+        benchmark = Cs.y(f"benchmark: {self.run_benchmark}")
+        printfl(f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})")
 
         done_tests: Dict[Path, bool] = {}
 
         result = Result()
         for suite in tests:
-            print(f"\n- Testing Chapter {suite.chapter.name}", flush=True)
+            printfl(f"\n- Testing Chapter {suite.chapter.name}")
             match suite.chapter:
                 case Chapter.SCANNING | Chapter.PARSING | Chapter.EVALUATING:
-                    print(f"\t- SKIPPED (can only be ran individually)")
+                    printfl(f"\t- SKIPPED (can only be ran individually)")
                     result.skipped += 1
                     continue
 
             for test in suite.tests:
-                if self.filter is not None and not self.filter.match(test):
+                if not self._filter(test):
                     result.skipped += 1
                     continue
 
                 if (done := done_tests.get(test)) is not None:
+                    passed = Cs.g("PASSED") if done else Cs.r("FAILED")
+                    printfl(f"\t> {passed} {Cs.y("(cached)")}: {test}")
                     if done:
-                        print(f"\t> {Cs.g("PASSED")} {Cs.y("(cached)")}: {test}", flush=True)
                         result.passed += 1
                     else:
-                        print(f"\t> {Cs.r("FAILED")} {Cs.y("(cached)")}: {test}", flush=True)
                         result.failed += 1
                     continue
 
@@ -280,18 +297,19 @@ class Test:
         return result
 
     def run_chapter(self, chapter: Chapter) -> Result:
-        print(f"\n>>> Running {self.interpreter.value.name} tests", flush=True)
+        benchmark = Cs.y(f"benchmark: {self.run_benchmark}")
+        printfl(f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})")
         suite = self._suite_from_chapter(chapter)
         result = Result()
 
         if suite is None:
-            print(f"Can't find suite for chapter {chapter}, probably wrong variant")
+            printfl(f"Can't find suite for chapter {chapter}, probably wrong variant")
             result.skipped = 1
             return result
 
-        print(f"\n- Testing Chapter {suite.chapter.name}", flush=True)
+        printfl(f"\n- Testing Chapter {suite.chapter.name}")
         for test in suite.tests:
-            if self.filter is not None and not self.filter.match(test):
+            if not self._filter(test):
                 result.skipped += 1
                 continue
 
@@ -308,7 +326,7 @@ class Test:
     def _run_test(self, test: Path) -> bool | None:
         expect = self._parse_test(test)
         if expect is None:
-            print(f"\t- 'test' is not a test file, skipping")
+            printfl(f"\t- 'test' is not a test file, skipping")
             return None
 
         def args(exe: Exe):
@@ -320,13 +338,19 @@ class Test:
                 case _:
                     raise TypeError("Not a Binary or Command, did you added new types?")
 
-        print(f"\t> {Cm.s()}running '{test}'", end="", flush=True)
+        printfl(f"\t> {Cm.s()}running '{test}'", end="")
         exec = args(self.interpreter.value)
 
         try:
-            proc = run(exec + [str(test)], capture_output=True, text=True, timeout=10)
+            timeout = self.timeout_sec if self.timeout_sec > 0 else None
+            proc = run(
+                exec + [str(test)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
         except TimeoutExpired:
-            print(Cm.u() + Cs.r("TIMEOUT"))
+            printfl(Cm.u() + Cs.r("TIMEOUT"))
             return False
 
         stdout = proc.stdout
@@ -335,19 +359,31 @@ class Test:
 
         # panic!
         if returncode == 101:
-            print(stderr)
-            print("=" * 80)
-            print("...")
+            printfl(stderr)
+            printfl("=" * 80)
+            printfl("...")
             return False
 
         if self._validate(test, expect, stdout, stderr, returncode):
-            print(f"{Cm.u()}{Cs.g("PASSED ")}")
+            printfl(f"{Cm.u()}{Cs.g("PASSED ")}")
+            if self.print_output:
+                pprint(stdout, stderr)
             return True
         else:
-            print(f"{Cm.u()}{Cs.r("FAILED ")}")
-            [print(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
+            printfl(f"{Cm.u()}{Cs.r("FAILED ")}")
+            [printfl(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
             pprint(stdout, stderr)
             return False
+
+    def _filter(self, path: Path) -> bool:
+        if not self.run_benchmark:
+            if not self.BENCHMARK_FILTER.match(path):
+                return False
+
+        if self.filter is not None and not self.filter.match(path):
+            return False
+
+        return True
 
     def _validate(
         self, test: Path, expect: Expect, output: str, error: str, returncode: int
@@ -462,7 +498,10 @@ class Test:
 def main() -> int:
     interpreters = [e.value.name for e in Interpreter] + ["all"]
 
-    parser = ArgumentParser(formatter_class=RawTextHelpFormatter)
+    class Formatter(RawTextHelpFormatter, ArgumentDefaultsHelpFormatter):
+        pass
+
+    parser = ArgumentParser(formatter_class=Formatter)
 
     parser.add_argument(
         "interpreter",
@@ -470,32 +509,45 @@ def main() -> int:
         + "\n- ".join(interpreters),
         choices=interpreters,
         metavar="interpreter",
-        default=None,
     )
+
+    parser.add_argument(
+        "-b",
+        help="Run the benchmarks as well",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-v",
+        help="Print output regardless of the result",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "-t",
+        help="Set a timeout for each test in seconds (float)",
+        type=float,
+        default=10.0,
+    )
+
+    group1 = parser.add_mutually_exclusive_group()
+    group1.add_argument(
+        "-f",
+        help="Filter test files by unix shell globbing pattern",
+        metavar="glob",
+    )
+    group1.add_argument(
+        "-e",
+        help="Exclude test files by unix shell globbing pattern",
+        metavar="glob",
+    )
+
     parser.add_argument(
         "-c",
         help="Run tests for a specific chapter:\n- "
-        + "\n- ".join([c.value.name for c in Chapter]),
-        nargs="?",
+        + "\n- ".join([c.value.name for c in Chapter]) + "\n",
         metavar="chapter",
-        default=None,
         choices=[c.name.lower() for c in Chapter],
-    )
-
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "-f",
-        help="Filter test files by unix shell globbing pattern",
-        nargs="?",
-        metavar="glob",
-        default=None,
-    )
-    group.add_argument(
-        "-e",
-        help="Exclude test files by unix shell globbing pattern",
-        nargs="?",
-        metavar="glob",
-        default=None,
     )
 
     if len(sys.argv) == 1:
@@ -504,6 +556,9 @@ def main() -> int:
 
     args = parser.parse_args()
     chapter = args.c
+    run_benchmark = args.b
+    print_output = args.v
+    timeout = args.t
 
     filter = None
     match (args.f, args.e):
@@ -530,15 +585,15 @@ def main() -> int:
     result = Result()
     if args.interpreter == "all":
         for interpreter in Interpreter:
-            test = Test(interpreter, filter)
+            test = Test(interpreter, filter, run_benchmark, print_output, timeout)
             result += run(test)
     else:
         interpreter = Interpreter[args.interpreter.upper()]
-        test = Test(interpreter, filter)
+        test = Test(interpreter, filter, run_benchmark, print_output, timeout)
         result = run(test)
 
-    print("\n>>> Summary")
-    print(result)
+    printfl("\n>>> Summary")
+    printfl(result)
 
     return 1 if result.failed > 0 else 0
 
@@ -554,7 +609,7 @@ def prepare_interpreters() -> bool:
     The function will be called before `populate_tests()` function.
     """
 
-    print(Cs.y("Preparing interpreters..."), end=" ", flush=True)
+    printfl(Cs.y("Preparing interpreters..."), end=" ")
 
     for interpreter in Interpreter:
         name = interpreter.value.name.lower()
@@ -574,12 +629,12 @@ def prepare_interpreters() -> bool:
                 text=True,
             )
         except CalledProcessError as exc:
-            print(Cs.r(f"FAILED [{exc.returncode}]"))
+            printfl(Cs.r(f"FAILED [{exc.returncode}]"))
             pprint(exc.stdout, exc.stderr)
 
             return False
 
-    print(Cs.g("DONE"))
+    printfl(Cs.g("DONE"))
 
     return True
 
