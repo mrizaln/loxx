@@ -73,7 +73,7 @@ impl Interpreter {
     fn populate_env(&mut self) {
         let name = self.str_arena.get_or_intern("clock");
         let clock = NativeFunction::new(name, Box::new([]), native_functions::clock);
-        self.environment.define(name, Value::NativeFunction(clock));
+        self.environment.define(name, Value::native_function(clock));
     }
 }
 
@@ -90,6 +90,6 @@ mod native_functions {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
-        Ok(Value::Number(seconds))
+        Ok(Value::number(seconds))
     }
 }

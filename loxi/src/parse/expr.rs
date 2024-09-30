@@ -106,16 +106,16 @@ impl ValExpr {
     pub fn eval(&self, env: &mut Env, arena: &Rodeo) -> Result<Value, RuntimeError> {
         match self {
             ValExpr::Literal { value } => match &value.tok {
-                token::Literal::Number(num) => Ok(Value::Number(*num)),
+                token::Literal::Number(num) => Ok(Value::number(*num)),
                 token::Literal::String(str) => {
                     let literal = arena.resolve(str);
                     let string = util::extract_string_literal_identifier(literal)
                         .expect("Not a string literal");
-                    Ok(Value::String(Rc::new(string.into())))
+                    Ok(Value::string(string.into()))
                 }
-                token::Literal::True => Ok(Value::Bool(true)),
-                token::Literal::False => Ok(Value::Bool(false)),
-                token::Literal::Nil => Ok(Value::Nil),
+                token::Literal::True => Ok(Value::bool(true)),
+                token::Literal::False => Ok(Value::bool(false)),
+                token::Literal::Nil => Ok(Value::nil()),
             },
             ValExpr::Grouping { expr } => expr.eval(env, arena),
             ValExpr::Unary { operator, right } => {
@@ -179,12 +179,12 @@ impl ValExpr {
                     .collect::<Result<Box<[_]>, _>>()?;
 
                 match callee {
-                    Value::Function(mut expr) => {
+                    Value::Function(expr) => {
                         let mut new_env = env.child();
                         let result = expr.call(args, &mut new_env, arena)?;
                         Ok(result)
                     }
-                    Value::NativeFunction(mut expr) => {
+                    Value::NativeFunction(expr) => {
                         let mut new_env = env.child();
                         let result = expr.call(args, &mut new_env, arena)?;
                         Ok(result)

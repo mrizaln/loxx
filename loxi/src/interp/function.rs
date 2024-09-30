@@ -12,12 +12,8 @@ use super::{env::Env, value::Value};
 /// For anything callable in Lox
 pub trait Callable {
     fn arity(&self) -> usize;
-    fn call(
-        &mut self,
-        args: Box<[Value]>,
-        env: &mut Env,
-        arena: &Rodeo,
-    ) -> Result<Value, RuntimeError>;
+    fn call(&self, args: Box<[Value]>, env: &mut Env, arena: &Rodeo)
+        -> Result<Value, RuntimeError>;
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -64,7 +60,7 @@ impl Callable for Function {
     }
 
     fn call(
-        &mut self,
+        &self,
         args: Box<[Value]>,
         env: &mut Env,
         arena: &Rodeo,
@@ -86,7 +82,7 @@ impl Callable for Function {
             stmt.execute(env, arena)?;
         }
 
-        Ok(Value::Nil)
+        Ok(Value::nil())
     }
 }
 
@@ -111,7 +107,7 @@ impl Callable for NativeFunction {
     }
 
     fn call(
-        &mut self,
+        &self,
         args: Box<[Value]>,
         env: &mut Env,
         arena: &Rodeo,

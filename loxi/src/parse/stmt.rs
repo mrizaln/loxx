@@ -59,7 +59,7 @@ impl Stmt {
 
                 let value = match init {
                     Some(expr) => expr.eval_cloned(env, arena)?,
-                    None => Value::Nil,
+                    None => Value::nil(),
                 };
 
                 // TODO: add location metadata
@@ -93,7 +93,7 @@ impl Stmt {
             }
 
             // should I really clone here?
-            Stmt::Function { func } => env.define(func.name, Value::Function(func.clone())),
+            Stmt::Function { func } => env.define(func.name, Value::function(func.clone())),
         };
 
         Ok(())

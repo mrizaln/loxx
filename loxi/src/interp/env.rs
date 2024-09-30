@@ -1,7 +1,7 @@
 use std::cell::{RefCell, RefMut};
-use std::collections::HashMap;
 use std::rc::Rc;
 
+use fnv::FnvHashMap;
 use lasso::Spur;
 
 use super::value::Value;
@@ -12,7 +12,7 @@ pub struct Env {
 }
 
 struct Node {
-    values: RefCell<HashMap<Spur, Value>>,
+    values: RefCell<FnvHashMap<Spur, Value>>,
     parent: Env,
 }
 
@@ -20,7 +20,7 @@ impl Env {
     pub fn new() -> Self {
         Env {
             inner: Some(Rc::new(Node {
-                values: RefCell::new(HashMap::new()),
+                values: RefCell::new(FnvHashMap::default()),
                 parent: Env { inner: None },
             })),
         }
@@ -28,7 +28,7 @@ impl Env {
 
     pub fn child(&self) -> Self {
         let node = Node {
-            values: RefCell::new(HashMap::new()),
+            values: RefCell::new(FnvHashMap::default()),
             parent: self.clone(),
         };
         Env {
@@ -91,22 +91,22 @@ mod test {
         let mut intern = |str| arena.get_or_intern(str);
 
         let parent = Env::new();
-        parent.define(intern("a"), Value::Number(1.0));
+        parent.define(intern("a"), Value::number(1.0));
         assert_eq!(
             parent.get(&intern("a")).map(clone),
-            Some(Value::Number(1.0))
+            Some(Value::number(1.0))
         );
 
         let child = parent.child();
-        child.define(intern("b"), Value::Number(2.0));
-        assert_eq!(child.get(&intern("a")).map(clone), Some(Value::Number(1.0)));
-        assert_eq!(child.get(&intern("b")).map(clone), Some(Value::Number(2.0)));
+        child.define(intern("b"), Value::number(2.0));
+        assert_eq!(child.get(&intern("a")).map(clone), Some(Value::number(1.0)));
+        assert_eq!(child.get(&intern("b")).map(clone), Some(Value::number(2.0)));
 
         let one = borrow1(&child, &arena);
         let two = borrow2(&child, &arena);
 
-        assert_eq!(one, Value::Number(1.0));
-        assert_eq!(two, Value::Number(2.0));
+        assert_eq!(one, Value::number(1.0));
+        assert_eq!(two, Value::number(2.0));
     }
 
     fn borrow1(env: &Env, arena: &Rodeo) -> Value {
