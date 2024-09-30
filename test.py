@@ -423,7 +423,7 @@ class Test:
         success = True
         lines = real.splitlines()
 
-        if (e := len(expect)) != (r := len(real)):
+        if (e := len(expect)) != (r := len(lines)):
             self._fail(test, f"Got differing output length: expect '{e}', got '{r}'")
 
         for (_, e), r in zip(expect, lines):
@@ -545,7 +545,8 @@ def main() -> int:
     parser.add_argument(
         "-c",
         help="Run tests for a specific chapter:\n- "
-        + "\n- ".join([c.value.name for c in Chapter]) + "\n",
+        + "\n- ".join([c.value.name for c in Chapter])
+        + "\n",
         metavar="chapter",
         choices=[c.name.lower() for c in Chapter],
     )
