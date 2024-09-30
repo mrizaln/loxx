@@ -94,9 +94,23 @@ impl Value {
                 new_str.push_str(str2.deref().as_str());
                 Some(Value::string(new_str))
             }
-            (Value::String(str1), Value::StringLiteral(spur)) => {
+            (Value::String(str1), Value::StringLiteral(str2)) => {
                 let mut new_str = str1.deref().clone();
-                let str2 = arena.resolve(&spur);
+                let str2 = arena.resolve(&str2);
+                new_str.push_str(str2);
+                Some(Value::string(new_str))
+            }
+            (Value::StringLiteral(str1), Value::String(str2)) => {
+                let mut new_str = str2.deref().clone();
+                let str1 = arena.resolve(&str1);
+                new_str.insert_str(0, str1);
+                Some(Value::string(new_str))
+            }
+            (Value::StringLiteral(str1), Value::StringLiteral(str2)) => {
+                let mut new_str = String::new();
+                let str1 = arena.resolve(&str1);
+                let str2 = arena.resolve(&str2);
+                new_str.push_str(str1);
                 new_str.push_str(str2);
                 Some(Value::string(new_str))
             }
@@ -185,8 +199,8 @@ impl Value {
             Value::String(_) => "<string>",
             Value::Object(_) => "<object>",
             Value::Function(_) => "<function>",
-            Value::NativeFunction(_) => "<function>",
-            Value::StringLiteral(_) => "<string>",
+            Value::NativeFunction(_) => "<native_function>",
+            Value::StringLiteral(_) => "<string_literal>",
         }
     }
 
@@ -210,7 +224,7 @@ impl Display for DisplayedValue<'_, '_> {
             }
             Value::NativeFunction(func) => {
                 let name = arena.resolve(&func.name);
-                write!(f, "<fun {name}>")
+                write!(f, "<native_fun {name}>")
             }
             Value::StringLiteral(spur) => {
                 let name = arena.resolve(spur);
