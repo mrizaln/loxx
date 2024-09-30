@@ -1,4 +1,6 @@
-use lasso::Spur;
+use std::fmt::Display;
+
+use lasso::{Rodeo, Spur};
 
 use crate::util::Token;
 
@@ -11,6 +13,63 @@ pub enum Punctuation {
     Comma,
     Dot,
     Semicolon,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum Operator {
+    Bang,
+    BangEqual,
+    Equal,
+    EqualEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum Keyword {
+    True,
+    False,
+    And,
+    Or,
+    Class,
+    If,
+    Else,
+    For,
+    While,
+    Fun,
+    Nil,
+    Print,
+    Return,
+    Super,
+    This,
+    Var,
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum Literal {
+    String(Spur),
+    Identifier(Spur),
+    Number(f64),
+}
+
+pub struct DisplayedLiteral<'a, 'b> {
+    literal: &'a Literal,
+    arena: &'b Rodeo,
+}
+
+impl Literal {
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedLiteral<'a, 'b> {
+        DisplayedLiteral {
+            literal: self,
+            arena,
+        }
+    }
 }
 
 impl Into<char> for &Punctuation {
@@ -58,22 +117,6 @@ impl TryFrom<char> for Punctuation {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub enum Operator {
-    Bang,
-    BangEqual,
-    Equal,
-    EqualEqual,
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-}
-
 impl Into<&str> for &Operator {
     fn into(self) -> &'static str {
         match self {
@@ -113,26 +156,6 @@ impl TryFrom<&str> for Operator {
             _ => Err(()),
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub enum Keyword {
-    True,
-    False,
-    And,
-    Or,
-    Class,
-    If,
-    Else,
-    For,
-    While,
-    Fun,
-    Nil,
-    Print,
-    Return,
-    Super,
-    This,
-    Var,
 }
 
 impl Into<&str> for &Keyword {
@@ -184,20 +207,13 @@ impl TryFrom<&str> for Keyword {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub enum Literal {
-    String(Spur),
-    Identifier(Spur),
-    Number(f64),
-}
-
-// TODO: remove this impl and create a proper conversion to String using the lasso::RodeoReader
-impl Into<String> for &Literal {
-    fn into(self) -> String {
-        match self {
-            Literal::String(spur) => format!("spur|{}|", spur.into_inner()),
-            Literal::Identifier(spur) => format!("spur|{}|", spur.into_inner()),
-            Literal::Number(num) => format!("{num}"),
+impl Display for DisplayedLiteral<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arena = self.arena;
+        match self.literal {
+            Literal::String(spur) => write!(f, "{}", arena.resolve(spur)),
+            Literal::Identifier(spur) => write!(f, "{}", arena.resolve(spur)),
+            Literal::Number(num) => write!(f, "{num}"),
         }
     }
 }

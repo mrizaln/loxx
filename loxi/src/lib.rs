@@ -72,7 +72,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
 
     if mode == RunMode::DumpLex {
         for tok in tokens.iter() {
-            println!("{tok}");
+            println!("{}", tok.display(str_arena));
         }
         return Ok(());
     }
@@ -95,7 +95,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
 
     if mode == RunMode::DumpParse {
         for stmt in program.statements.iter() {
-            println!("{stmt}");
+            println!("{}", stmt.display(str_arena));
         }
         return Ok(());
     }

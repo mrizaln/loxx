@@ -98,10 +98,14 @@ fn get_reference_ast() -> Expr {
 #[test]
 fn print_expr_tree() {
     let expr = get_reference_ast();
-    println!("{expr}");
+    let arena = Rodeo::default();
+
+    // the tokens inside the AST should not need arena here, so a default one suffice
+
+    println!("{}", expr.display(&arena));
 
     let result = "(== (< (* 1 (group (- 2 3))) 4) false)";
-    assert_eq!(result, format!("{expr}"))
+    assert_eq!(result, format!("{}", expr.display(&arena)))
 }
 
 #[test]

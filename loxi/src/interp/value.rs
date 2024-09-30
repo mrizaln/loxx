@@ -1,6 +1,5 @@
-use std::fmt::{Debug, Display};
-use std::ops::Deref;
 use std::rc::Rc;
+use std::{fmt::Display, ops::Deref};
 
 use lasso::{Rodeo, Spur};
 
@@ -9,8 +8,7 @@ use super::{
     object::Object,
 };
 
-// TODO: use Rc for heavy object (String and LoxObject)
-#[derive(PartialEq, PartialOrd)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum Value {
     Nil,
     Bool(bool),
@@ -26,6 +24,13 @@ pub enum Value {
     /// NOTE: There is no distinction between `String` and string literal in Lox, this is just an
     ///       optimization.
     StringLiteral(Spur),
+}
+
+/// A wrapper for `Value` that can be displayed. This is necessary to "pass" arena as addtional
+/// argument to `Display::fmt` method.
+pub struct DisplayedValue<'a, 'b> {
+    value: &'a Value,
+    arena: &'b Rodeo,
 }
 
 impl Value {
@@ -184,6 +189,35 @@ impl Value {
             Value::StringLiteral(_) => "<string>",
         }
     }
+
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedValue<'a, 'b> {
+        DisplayedValue { value: self, arena }
+    }
+}
+
+impl Display for DisplayedValue<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arena = self.arena;
+        match self.value {
+            Value::Nil => write!(f, "nil"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Number(num) => write!(f, "{num}"),
+            Value::String(str) => write!(f, "{}", str.as_str()),
+            Value::Object(_) => write!(f, "<object>"),
+            Value::Function(func) => {
+                let name = arena.resolve(&func.name);
+                write!(f, "<fun {name}>")
+            }
+            Value::NativeFunction(func) => {
+                let name = arena.resolve(&func.name);
+                write!(f, "<fun {name}>")
+            }
+            Value::StringLiteral(spur) => {
+                let name = arena.resolve(spur);
+                write!(f, "{}", name)
+            }
+        }
+    }
 }
 
 impl Clone for Value {
@@ -197,44 +231,6 @@ impl Clone for Value {
             Value::String(str) => Value::String(Rc::clone(str)),
             Value::Object(obj) => Value::Object(Rc::clone(obj)),
             Value::StringLiteral(spur) => Value::StringLiteral(*spur),
-        }
-    }
-}
-
-impl Debug for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Nil => write!(f, "Nil"),
-            Value::Bool(b) => write!(f, "Bool({b})"),
-            Value::Number(num) => write!(f, "Number({num})"),
-            Value::String(str) => write!(f, "String({})", str.deref()),
-            Value::Object(_) => write!(f, "Object(<dummy>)"),
-            Value::Function(func) => {
-                write!(f, "Function(spur|{}|)", func.name.into_inner())
-            }
-            Value::NativeFunction(func) => {
-                write!(f, "Function(spur|{}|)", func.name.into_inner())
-            }
-            Value::StringLiteral(spur) => write!(f, "StringLiteral(spur|{}|)", spur.into_inner()),
-        }
-    }
-}
-
-impl Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Nil => write!(f, "nil"),
-            Value::Bool(b) => write!(f, "{b}"),
-            Value::Number(num) => write!(f, "{num}"),
-            Value::String(str) => write!(f, "{}", str.deref()),
-            Value::Object(_) => write!(f, "<object>"),
-            Value::Function(func) => {
-                write!(f, "<fun spur|{}|>", func.name.into_inner())
-            }
-            Value::NativeFunction(func) => {
-                write!(f, "<fun spur|{}|>", func.name.into_inner())
-            }
-            Value::StringLiteral(spur) => write!(f, "StringLiteral(spur|{}|)", spur.into_inner()),
         }
     }
 }

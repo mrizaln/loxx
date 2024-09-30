@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use lasso::Spur;
+use lasso::{Rodeo, Spur};
 
 use crate::util::Token;
 
@@ -13,46 +13,10 @@ pub enum Literal {
     Nil,
 }
 
-// TODO: remove this impl and create a proper conversion to String using the lasso::RodeoReader
-impl Into<String> for &Literal {
-    fn into(self) -> String {
-        match self {
-            Literal::Number(num) => format!("{num}"),
-            Literal::String(spur) => format!(r#""spur|{}|""#, spur.into_inner()),
-            Literal::True => "true".into(),
-            Literal::False => "false".into(),
-            Literal::Nil => "nil".into(),
-        }
-    }
-}
-
-impl Display for Literal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: String = self.into();
-        write!(f, "{str}")
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum UnaryOp {
     Minus,
     Not,
-}
-
-impl Into<&str> for &UnaryOp {
-    fn into(self) -> &'static str {
-        match self {
-            UnaryOp::Minus => "-",
-            UnaryOp::Not => "!",
-        }
-    }
-}
-
-impl Display for UnaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: &str = self.into();
-        write!(f, "{str}")
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -67,6 +31,66 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum LogicalOp {
+    And,
+    Or,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct Variable {
+    pub name: Spur,
+}
+
+pub struct DisplayedLiteral<'a, 'b> {
+    literal: &'a Literal,
+    arena: &'b Rodeo,
+}
+
+pub struct DisplayedVariable<'a, 'b> {
+    variable: &'a Variable,
+    arena: &'b Rodeo,
+}
+
+impl Literal {
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedLiteral<'a, 'b> {
+        DisplayedLiteral {
+            literal: self,
+            arena,
+        }
+    }
+}
+
+impl Variable {
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedVariable<'a, 'b> {
+        DisplayedVariable {
+            variable: self,
+            arena,
+        }
+    }
+}
+
+impl Into<&str> for &Literal {
+    fn into(self) -> &'static str {
+        match self {
+            Literal::Number(_) => "<number>",
+            Literal::String(_) => "<string>",
+            Literal::True => "true".into(),
+            Literal::False => "false".into(),
+            Literal::Nil => "nil".into(),
+        }
+    }
+}
+
+impl Into<&str> for &UnaryOp {
+    fn into(self) -> &'static str {
+        match self {
+            UnaryOp::Minus => "-",
+            UnaryOp::Not => "!",
+        }
+    }
 }
 
 impl Into<&str> for &BinaryOp {
@@ -86,25 +110,39 @@ impl Into<&str> for &BinaryOp {
     }
 }
 
-impl Display for BinaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: &str = self.into();
-        write!(f, "{str}")
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub enum LogicalOp {
-    And,
-    Or,
-}
-
 impl Into<&str> for &LogicalOp {
     fn into(self) -> &'static str {
         match self {
             LogicalOp::And => "and",
             LogicalOp::Or => "or",
         }
+    }
+}
+
+impl Into<&str> for &Variable {
+    fn into(self) -> &'static str {
+        "<variable>"
+    }
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: &str = self.into();
+        write!(f, "{str}")
+    }
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: &str = self.into();
+        write!(f, "{str}")
+    }
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str: &str = self.into();
+        write!(f, "{str}")
     }
 }
 
@@ -115,11 +153,24 @@ impl Display for LogicalOp {
     }
 }
 
-// TODO: place the name inside a global container or something then use a reference to access the
-//       name so theres no cloning required
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Variable {
-    pub name: Spur,
+impl Display for DisplayedLiteral<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arena = self.arena;
+        match self.literal {
+            Literal::Number(num) => write!(f, "{num}"),
+            Literal::String(str) => write!(f, r#""{}""#, arena.resolve(str)),
+            Literal::True => write!(f, "true"),
+            Literal::False => write!(f, "false"),
+            Literal::Nil => write!(f, "nil"),
+        }
+    }
+}
+
+impl Display for DisplayedVariable<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arena = self.arena;
+        write!(f, "{}", arena.resolve(&self.variable.name))
+    }
 }
 
 impl Token for Literal {}

@@ -1,5 +1,5 @@
 use std::cell::RefMut;
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 
 use lasso::Rodeo;
 
@@ -10,14 +10,14 @@ use crate::interp::value::Value;
 use crate::interp::RuntimeError;
 use crate::util::{Location, TokLoc};
 
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Expr {
     ValExpr(ValExpr),
     RefExpr(RefExpr),
 }
 
 /// Expression that produces `Value`
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum ValExpr {
     Literal {
         value: TokLoc<token::Literal>,
@@ -47,7 +47,7 @@ pub enum ValExpr {
 }
 
 /// Expression that produces a reference to `Value`
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum RefExpr {
     Variable {
         var: TokLoc<token::Variable>,
@@ -59,6 +59,21 @@ pub enum RefExpr {
         var: TokLoc<token::Variable>,
         value: Box<Expr>,
     },
+}
+
+pub struct DisplayedExpr<'a, 'b> {
+    expr: &'a Expr,
+    arena: &'b Rodeo,
+}
+
+pub struct DisplayedValExpr<'a, 'b> {
+    expr: &'a ValExpr,
+    arena: &'b Rodeo,
+}
+
+pub struct DisplayedRefExpr<'a, 'b> {
+    expr: &'a RefExpr,
+    arena: &'b Rodeo,
 }
 
 impl Expr {
@@ -98,6 +113,10 @@ impl Expr {
             }
         }
         Ok(())
+    }
+
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedExpr<'a, 'b> {
+        DisplayedExpr { expr: self, arena }
     }
 }
 
@@ -188,6 +207,10 @@ impl ValExpr {
             }
         }
     }
+
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedValExpr<'a, 'b> {
+        DisplayedValExpr { expr: self, arena }
+    }
 }
 
 impl RefExpr {
@@ -218,56 +241,32 @@ impl RefExpr {
             }
         }
     }
-}
 
-impl Display for ValExpr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string: String = match &self {
-            ValExpr::Literal { value } => (&value.tok).into(),
-            ValExpr::Unary { operator, right } => {
-                let op: &str = (&operator.tok).into();
-                format!("({op} {right})")
-            }
-            ValExpr::Binary {
-                left,
-                operator,
-                right,
-            } => {
-                let op: &str = (&operator.tok).into();
-                format!("({op} {left} {right})")
-            }
-
-            ValExpr::Grouping { expr } => {
-                format!("(group {expr})")
-            }
-            ValExpr::Logical { left, kind, right } => {
-                let op: &str = (&kind.tok).into();
-                format!("({op} {left} {right})")
-            }
-            ValExpr::Call { callee, args, .. } => {
-                let mut string = format!("(call {callee} ");
-                string.push_str("(args");
-                for expr in args {
-                    string = string + &format!(" {expr}");
-                }
-                string.push_str("))");
-                string
-            }
-        };
-        write!(f, "{}", string)
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedRefExpr<'a, 'b> {
+        DisplayedRefExpr { expr: self, arena }
     }
 }
 
-impl Debug for ValExpr {
+impl Display for DisplayedExpr<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string: String = match &self {
+        let arena = self.arena;
+        match self.expr {
+            Expr::ValExpr(expr) => write!(f, "{}", expr.display(arena)),
+            Expr::RefExpr(expr) => write!(f, "{}", expr.display(arena)),
+        }
+    }
+}
+
+impl Display for DisplayedValExpr<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arena = self.arena;
+        match self.expr {
             ValExpr::Literal { value } => {
-                let str: String = (&value.tok).into();
-                format!("{}{}", str, value.loc)
+                write!(f, "{}", value.tok.display(arena))
             }
             ValExpr::Unary { operator, right } => {
                 let op: &str = (&operator.tok).into();
-                format!("({op}{} {right:?})", operator.loc)
+                write!(f, "({op} {})", right.display(arena))
             }
             ValExpr::Binary {
                 left,
@@ -275,80 +274,39 @@ impl Debug for ValExpr {
                 right,
             } => {
                 let op: &str = (&operator.tok).into();
-                format!("({op}{} {left:?} {right:?})", operator.loc)
+                write!(f, "({op} {} {})", left.display(arena), right.display(arena))
             }
-
             ValExpr::Grouping { expr } => {
-                format!("(group {expr:?})")
+                write!(f, "(group {})", expr.display(arena))
             }
             ValExpr::Logical { left, kind, right } => {
                 let op: &str = (&kind.tok).into();
-                format!("({op}{} {left:?} {right:?})", kind.loc)
+                write!(f, "({op} {} {})", left.display(arena), right.display(arena))
             }
-            ValExpr::Call { callee, loc, args } => {
-                let mut string = format!("(call{loc} {callee:?} ");
-                string.push_str("(args");
+            ValExpr::Call { callee, args, .. } => {
+                write!(f, "(call {} ", callee.display(arena))?;
+                write!(f, "(args")?;
                 for expr in args {
-                    string = string + &format!(" {expr:?}");
+                    write!(f, " {}", expr.display(arena))?;
                 }
-                string.push_str("))");
-                string
+                write!(f, "))")
             }
-        };
-        write!(f, "{}", string)
+        }
     }
 }
 
 // TODO: remove these impl for Display and Debug then replace with proper conversion from Spur
 
-impl Display for RefExpr {
+impl Display for DisplayedRefExpr<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RefExpr::Variable {
-                var: TokLoc { tok, .. },
-            } => write!(f, "(var spur|{}|)", tok.name.into_inner()),
-            RefExpr::Grouping { expr } => Display::fmt(&expr, f),
+        let arena = self.arena;
+        match self.expr {
+            RefExpr::Variable { var } => write!(f, "(var {})", arena.resolve(&var.tok.name)),
+            RefExpr::Grouping { expr } => write!(f, "{}", expr.display(arena)),
             RefExpr::Assignment { var, value } => {
-                write!(f, "(= spur|{}| {})", var.tok.name.into_inner(), value)
+                let name = arena.resolve(&var.tok.name);
+                write!(f, "(= {} {})", name, value.display(arena))
             }
-        }
-    }
-}
-
-impl Debug for RefExpr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RefExpr::Variable {
-                var: TokLoc { tok, loc },
-            } => write!(f, "(var{} spur|{}|)", loc, tok.name.into_inner()),
-            RefExpr::Grouping { expr } => Debug::fmt(&expr, f),
-            RefExpr::Assignment { var, value } => {
-                write!(
-                    f,
-                    "(={} spur|{}| {:?})",
-                    var.loc,
-                    var.tok.name.into_inner(),
-                    value
-                )
-            }
-        }
-    }
-}
-
-impl Display for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Expr::ValExpr(expr) => Display::fmt(&expr, f),
-            Expr::RefExpr(expr) => Display::fmt(&expr, f),
-        }
-    }
-}
-
-impl Debug for Expr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Expr::ValExpr(expr) => Debug::fmt(&expr, f),
-            Expr::RefExpr(expr) => Debug::fmt(&expr, f),
         }
     }
 }

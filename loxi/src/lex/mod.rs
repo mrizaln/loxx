@@ -12,13 +12,18 @@ use macros::tok;
 mod test;
 pub mod token;
 
-#[derive(Clone, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Token {
     Punctuation(TokLoc<token::Punctuation>),
     Operator(TokLoc<token::Operator>),
     Keyword(TokLoc<token::Keyword>),
     Literal(TokLoc<token::Literal>),
     Eof(Location),
+}
+
+pub struct DisplayedToken<'a, 'b> {
+    token: &'a Token,
+    arena: &'b Rodeo,
 }
 
 impl Token {
@@ -45,26 +50,19 @@ impl Token {
             Token::Eof(_) => "<eof>",
         }
     }
-}
 
-impl Debug for Token {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Token::Punctuation(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
-            Token::Operator(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
-            Token::Keyword(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
-            Token::Literal(tokl) => write!(f, "Tok {}: {:?}", tokl.loc, tokl.tok),
-            Token::Eof(loc) => write!(f, "Tok {}: EOF", loc),
-        }
+    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedToken<'a, 'b> {
+        DisplayedToken { token: self, arena }
     }
 }
 
-impl Display for Token {
+impl Display for DisplayedToken<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
+        let arena = self.arena;
+        match self.token {
             Token::Literal(tokl) => {
-                let name: &str = self.static_str();
-                let value: String = (&tokl.tok).into();
+                let name = self.token.static_str();
+                let value = tokl.tok.display(arena);
                 write!(f, r#"{} Tok{{ "{}": "{}" }}"#, tokl.loc, name, value)
             }
             Token::Punctuation(tokl) => {
