@@ -36,10 +36,11 @@ pub mod token;
 /// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
 ///
 /// statement   -> expr_stmt
+///                 | for_stmt
 ///                 | if_stmt
 ///                 | print_stmt
+///                 | return_stmt
 ///                 | while_stmt
-///                 | for_statment
 ///                 | block ;
 ///
 /// block       -> "{" declaration* "}"
@@ -55,6 +56,8 @@ pub mod token;
 /// for_stmt    -> "for" "(" (var_decl | expr_stmt | ";")
 ///                 expression? ";"
 ///                 expression? ")" statement ;
+///
+/// return_stmt -> "return" expression? ";" ;
 ///
 /// expression  -> assignment ;
 ///
@@ -352,6 +355,10 @@ impl Parser {
                 let loc = self.advance().unwrap().loc();
                 self.for_statement(loc)
             }
+            is_tok!(Keyword::Return) => {
+                let loc = self.advance().unwrap().loc();
+                self.return_statement(loc)
+            }
             _ => self.expression_statement(),
         }
     }
@@ -437,6 +444,22 @@ impl Parser {
                 statements: vec![stmt, while_stmt],
             }),
             None => Ok(while_stmt),
+        }
+    }
+
+    fn return_statement(&mut self, loc: Location) -> StmtResult {
+        match self.peek() {
+            Ok(tok) => {
+                let value = match tok {
+                    is_tok!(Punctuation::Semicolon) => None,
+                    _ => Some(*self.expression()?),
+                };
+                let _ = peek_no_eof! { self as [";"]
+                    if is_tok!(Punctuation::Semicolon) => self.advance(),
+                }?;
+                Ok(Stmt::Return { loc, value })
+            }
+            _ => Err(syntax_error!("<expression> or ;", "<eof>", loc)),
         }
     }
 

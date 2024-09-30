@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use lasso::{Rodeo, Spur};
 use thiserror::Error;
 
-use crate::parse::stmt::Stmt;
+use crate::parse::stmt::{Stmt, Unwind};
 use crate::util::Location;
 
 use super::RuntimeError;
@@ -79,7 +79,9 @@ impl Callable for Function {
         }
 
         for stmt in self.body.iter() {
-            stmt.execute(env, arena)?;
+            if let Unwind::Return(value, _) = stmt.execute(env, arena)? {
+                return Ok(value);
+            }
         }
 
         Ok(Value::nil())

@@ -38,6 +38,10 @@ pub enum Stmt {
     Function {
         func: Function,
     },
+    Return {
+        loc: Location,
+        value: Option<Expr>,
+    },
 }
 
 /// A wrapper for `Stmt` that can be displayed. This is necessary to "pass" arena as addtional
@@ -47,12 +51,22 @@ pub struct DisplayedStmt<'a, 'b> {
     arena: &'b Rodeo,
 }
 
+pub enum Unwind {
+    None,
+    Return(Value, Location),
+}
+
 impl Stmt {
-    pub fn execute(&self, env: &mut Env, arena: &Rodeo) -> Result<(), RuntimeError> {
+    // TODO: handle return statement
+    pub fn execute(&self, env: &mut Env, arena: &Rodeo) -> Result<Unwind, RuntimeError> {
         match self {
-            Stmt::Expr { expr } => expr.eval_unit(env, arena)?,
+            Stmt::Expr { expr } => {
+                expr.eval_unit(env, arena)?;
+                Ok(Unwind::None)
+            }
             Stmt::Print { expr, .. } => {
-                expr.eval_fn(env, arena, |v| println!("{}", v.display(arena)))?
+                expr.eval_fn(env, arena, |v| println!("{}", v.display(arena)))?;
+                Ok(Unwind::None)
             }
             Stmt::Var { name, init, .. } => {
                 //
@@ -73,12 +87,16 @@ impl Stmt {
 
                 // TODO: add location metadata
                 env.define(name.clone(), value);
+                Ok(Unwind::None)
             }
             Stmt::Block { statements } => {
                 let mut new_env = env.child();
                 for stmt in statements {
-                    stmt.execute(&mut new_env, arena)?;
+                    if let Unwind::Return(value, loc) = stmt.execute(&mut new_env, arena)? {
+                        return Ok(Unwind::Return(value, loc));
+                    }
                 }
+                Ok(Unwind::None)
             }
             Stmt::If {
                 condition,
@@ -86,10 +104,18 @@ impl Stmt {
                 otherwise,
                 ..
             } => match condition.eval_fn(env, arena, |v| v.truthiness())? {
-                true => then.execute(env, arena)?,
+                true => {
+                    if let Unwind::Return(value, loc) = then.execute(env, arena)? {
+                        Ok(Unwind::Return(value, loc))
+                    } else {
+                        Ok(Unwind::None)
+                    }
+                }
                 false => {
                     if let Some(stmt) = otherwise {
-                        stmt.execute(env, arena)?
+                        Ok(stmt.execute(env, arena)?)
+                    } else {
+                        Ok(Unwind::None)
                     }
                 }
             },
@@ -97,15 +123,25 @@ impl Stmt {
                 condition, body, ..
             } => {
                 while condition.eval_fn(env, arena, |v| v.truthiness())? {
-                    body.execute(env, arena)?
+                    if let Unwind::Return(value, loc) = body.execute(env, arena)? {
+                        return Ok(Unwind::Return(value, loc));
+                    }
                 }
+                Ok(Unwind::None)
             }
-
             // should I really clone here?
-            Stmt::Function { func } => env.define(func.name, Value::function(func.clone())),
-        };
-
-        Ok(())
+            Stmt::Function { func } => {
+                env.define(func.name, Value::function(func.clone()));
+                Ok(Unwind::None)
+            }
+            Stmt::Return { value, loc } => {
+                let value = match value {
+                    Some(expr) => expr.eval_cloned(env, arena)?,
+                    None => Value::nil(),
+                };
+                Ok(Unwind::Return(value, *loc))
+            }
+        }
     }
 
     pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedStmt<'a, 'b> {
@@ -169,6 +205,19 @@ impl Display for DisplayedStmt<'_, '_> {
                 }
                 write!(f, ")")
             }
+            Stmt::Return { value, .. } => match value {
+                Some(val) => write!(f, "(return {})", val.display(arena)),
+                None => write!(f, "(return nil)"),
+            },
+        }
+    }
+}
+
+impl Unwind {
+    pub fn expect_none(self) {
+        match self {
+            Unwind::None => {}
+            _ => panic!("expected no value"),
         }
     }
 }
