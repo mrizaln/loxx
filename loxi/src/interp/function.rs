@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use lasso::{Rodeo, Spur};
+use lasso::Spur;
 use thiserror::Error;
 
 use crate::parse::stmt::{Stmt, Unwind};
@@ -12,8 +12,9 @@ use super::{env::Env, value::Value};
 /// For anything callable in Lox
 pub trait Callable {
     fn arity(&self) -> usize;
-    fn call(&self, args: Box<[Value]>, env: &mut Env, arena: &Rodeo)
-        -> Result<Value, RuntimeError>;
+    fn call<F>(&self, args: Box<[Value]>, env: &Env, f: F) -> Result<Value, RuntimeError>
+    where
+        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>;
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -59,12 +60,10 @@ impl Callable for Function {
         self.params.len()
     }
 
-    fn call(
-        &self,
-        args: Box<[Value]>,
-        env: &mut Env,
-        arena: &Rodeo,
-    ) -> Result<Value, RuntimeError> {
+    fn call<F>(&self, args: Box<[Value]>, env: &Env, mut f: F) -> Result<Value, RuntimeError>
+    where
+        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
+    {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: self.loc,
@@ -79,7 +78,7 @@ impl Callable for Function {
         }
 
         for stmt in self.body.iter() {
-            if let Unwind::Return(value, _) = stmt.execute(env, arena)? {
+            if let Unwind::Return(value, _) = f(stmt)? {
                 return Ok(value);
             }
         }
@@ -88,7 +87,7 @@ impl Callable for Function {
     }
 }
 
-type NativeFn = fn(args: Box<[Value]>, env: &mut Env, arena: &Rodeo) -> Result<Value, RuntimeError>;
+type NativeFn = fn(args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError>;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct NativeFunction {
@@ -108,12 +107,10 @@ impl Callable for NativeFunction {
         self.params.len()
     }
 
-    fn call(
-        &self,
-        args: Box<[Value]>,
-        env: &mut Env,
-        arena: &Rodeo,
-    ) -> Result<Value, RuntimeError> {
+    fn call<F>(&self, args: Box<[Value]>, env: &Env, _: F) -> Result<Value, RuntimeError>
+    where
+        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
+    {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: Location::new(0, 0),
@@ -123,6 +120,6 @@ impl Callable for NativeFunction {
             .into());
         }
 
-        (self.body)(args, env, arena)
+        (self.body)(args, env)
     }
 }

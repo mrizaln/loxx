@@ -1,119 +1,93 @@
 use std::cell::{RefCell, RefMut};
-use std::rc::Rc;
 
 use fnv::FnvHashMap;
 use lasso::Spur;
 
 use super::value::Value;
 
-// inspired by: https://stackoverflow.com/a/48298865/16506263
+#[derive(Debug)]
 pub struct Env {
-    inner: Option<Rc<Node>>,
+    stack: RefCell<Vec<FnvHashMap<Spur, Value>>>,
 }
 
-struct Node {
-    values: RefCell<FnvHashMap<Spur, Value>>,
-    parent: Env,
+#[must_use = "EnvGuard lifetime defines the lifetime of the scope, it will immediately drop if not used"]
+pub struct EnvGuard<'a> {
+    stack: &'a Env,
+    index: usize,
 }
 
 impl Env {
     pub fn new() -> Self {
-        Env {
-            inner: Some(Rc::new(Node {
-                values: RefCell::new(FnvHashMap::default()),
-                parent: Env { inner: None },
-            })),
+        Self {
+            stack: RefCell::new(vec![FnvHashMap::default()]),
         }
     }
 
-    pub fn child(&self) -> Self {
-        let node = Node {
-            values: RefCell::new(FnvHashMap::default()),
-            parent: self.clone(),
-        };
-        Env {
-            inner: Some(Rc::new(node)),
+    pub fn len(&self) -> usize {
+        self.stack.borrow().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn create_scope(&self) -> EnvGuard<'_> {
+        self.stack.borrow_mut().push(FnvHashMap::default());
+        EnvGuard {
+            stack: self,
+            index: self.len() - 1,
         }
     }
 
     pub fn define(&self, key: Spur, value: Value) {
-        self.inner
-            .as_ref()
-            .unwrap()
-            .values
-            .borrow_mut()
-            .insert(key, value);
+        let mut map = self.get_map(self.index());
+        map.insert(key, value);
     }
 
-    pub fn define_parentmost(&self, key: Spur, value: Value) {
-        let mut env = self;
-        loop {
-            let node = env.inner.as_ref().unwrap();
-            if let None = node.parent.inner {
-                break env.define(key, value);
+    pub fn get_current(&self, key: Spur) -> Option<RefMut<'_, Value>> {
+        let map = self.get_map(self.index());
+        RefMut::filter_map(map, |m| m.get_mut(&key)).ok()
+    }
+
+    pub fn get(&self, key: Spur) -> Option<RefMut<'_, Value>> {
+        for i in (0..=self.index()).rev() {
+            let map = self.get_map(i);
+            let value = RefMut::filter_map(map, |m| m.get_mut(&key)).ok();
+            if value.is_some() {
+                return value;
             }
-            env = &node.parent;
         }
+        None
     }
 
-    pub fn get(&self, key: &Spur) -> Option<RefMut<'_, Value>> {
-        // lookup at the current node
-        let values = self.inner.as_ref()?.values.borrow_mut();
-        let value = RefMut::filter_map(values, |values| values.get_mut(key));
+    fn get_map(&self, index: usize) -> RefMut<'_, FnvHashMap<Spur, Value>> {
+        let stack = self.stack.borrow_mut();
+        RefMut::map(stack, |stack| {
+            stack.get_mut(index).unwrap_or_else(|| {
+                panic!(
+                    "iter should point to a valid stack frame (index: {}, len: {})",
+                    index,
+                    self.len()
+                )
+            })
+        })
+    }
 
-        match value {
-            // else lookup at parent node
-            Err(_) => self.inner.as_ref().unwrap().parent.get(key),
-            _ => value.ok(),
-        }
+    fn index(&self) -> usize {
+        self.len() - 1
     }
 }
 
-impl Clone for Env {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
+impl Drop for EnvGuard<'_> {
+    fn drop(&mut self) {
+        // check if the stack is invalid (parent scope is dropped before child scope)
+        if self.index != self.stack.len() - 1 {
+            panic!(
+                "invalid stack frame drop order (index: {}, len: {})",
+                self.index,
+                self.stack.len()
+            );
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use lasso::Rodeo;
-
-    use super::*;
-
-    #[test]
-    fn env_has_parent() {
-        let clone = |v: RefMut<'_, Value>| v.clone();
-
-        let mut arena = Rodeo::default();
-        let mut intern = |str| arena.get_or_intern(str);
-
-        let parent = Env::new();
-        parent.define(intern("a"), Value::number(1.0));
-        assert_eq!(
-            parent.get(&intern("a")).map(clone),
-            Some(Value::number(1.0))
-        );
-
-        let child = parent.child();
-        child.define(intern("b"), Value::number(2.0));
-        assert_eq!(child.get(&intern("a")).map(clone), Some(Value::number(1.0)));
-        assert_eq!(child.get(&intern("b")).map(clone), Some(Value::number(2.0)));
-
-        let one = borrow1(&child, &arena);
-        let two = borrow2(&child, &arena);
-
-        assert_eq!(one, Value::number(1.0));
-        assert_eq!(two, Value::number(2.0));
-    }
-
-    fn borrow1(env: &Env, arena: &Rodeo) -> Value {
-        env.get(&arena.get("a").unwrap()).unwrap().clone()
-    }
-
-    fn borrow2(env: &Env, arena: &Rodeo) -> Value {
-        env.get(&arena.get("b").unwrap()).unwrap().clone()
+        self.stack.stack.borrow_mut().pop();
     }
 }
