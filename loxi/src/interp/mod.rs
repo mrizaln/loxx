@@ -221,13 +221,14 @@ impl Interpreter {
                 let value = self.eval_cloned(right)?;
                 match operator.tok {
                     token::UnaryOp::Minus => value.minus(),
-                    token::UnaryOp::Not => value.not(),
+                    token::UnaryOp::Not => Ok(value.not()),
                 }
-                .ok_or(RuntimeError::InvalidUnaryOp(
-                    operator.loc,
-                    operator.tok.clone(),
-                    value.name(),
-                ))
+                .map_err(|err| match err {
+                    value::InvalidOp::Unary(s) => {
+                        RuntimeError::InvalidUnaryOp(operator.loc, operator.tok.clone(), s)
+                    }
+                    _ => unreachable!(),
+                })
             }
             ValExpr::Binary {
                 left,
@@ -242,19 +243,19 @@ impl Interpreter {
                     token::BinaryOp::Sub => lhs.sub(rhs),
                     token::BinaryOp::Mul => lhs.mul(rhs),
                     token::BinaryOp::Div => lhs.div(rhs),
-                    token::BinaryOp::Equal => lhs.eq(&rhs, &self.interner),
-                    token::BinaryOp::NotEqual => lhs.neq(&rhs, &self.interner),
+                    token::BinaryOp::Equal => Ok(lhs.eq(&rhs, &self.interner)),
+                    token::BinaryOp::NotEqual => Ok(lhs.neq(&rhs, &self.interner)),
                     token::BinaryOp::Less => lhs.lt(&rhs),
                     token::BinaryOp::LessEq => lhs.le(&rhs),
                     token::BinaryOp::Greater => lhs.gt(&rhs),
                     token::BinaryOp::GreaterEq => lhs.ge(&rhs),
                 }
-                .ok_or(RuntimeError::InvalidBinaryOp(
-                    operator.loc,
-                    operator.tok.clone(),
-                    "adfj",
-                    "adfh",
-                ))
+                .map_err(|err| match err {
+                    value::InvalidOp::Binary(l, r) => {
+                        RuntimeError::InvalidBinaryOp(operator.loc, operator.tok.clone(), l, r)
+                    }
+                    _ => unreachable!(),
+                })
             }
             ValExpr::Logical { left, kind, right } => {
                 let lhs = self.eval_cloned(left)?;

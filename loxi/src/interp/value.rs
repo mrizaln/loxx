@@ -30,6 +30,13 @@ pub struct DisplayedValue<'a, 'b> {
     interner: &'b Interner,
 }
 
+pub enum InvalidOp {
+    Unary(&'static str),
+    Binary(&'static str, &'static str),
+}
+
+type OpResult = Result<Value, InvalidOp>;
+
 impl Value {
     pub fn nil() -> Self {
         Value::Nil
@@ -72,36 +79,36 @@ impl Value {
         }
     }
 
-    pub fn not(&self) -> Option<Value> {
-        Some(Value::Bool(!self.truthiness()))
+    pub fn not(&self) -> Value {
+        Value::Bool(!self.truthiness())
     }
 
-    pub fn minus(&self) -> Option<Value> {
+    pub fn minus(&self) -> OpResult {
         match self {
-            Value::Number(num) => Some(Value::number(-num)),
-            _ => None,
+            Value::Number(num) => Ok(Value::number(-num)),
+            _ => invalid_unary(self),
         }
     }
 
-    pub fn add(self, other: Self, interner: &Interner) -> Option<Value> {
+    pub fn add(self, other: Self, interner: &Interner) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::number(num1 + num2)),
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::number(num1 + num2)),
             (Value::String(str1), Value::String(str2)) => {
                 let mut new_str = str1.deref().clone();
                 new_str.push_str(str2.deref().as_str());
-                Some(Value::string(new_str))
+                Ok(Value::string(new_str))
             }
             (Value::String(str1), Value::StringLiteral(str2)) => {
                 let mut new_str = str1.deref().clone();
                 let str2 = interner.resolve(str2);
                 new_str.push_str(str2);
-                Some(Value::string(new_str))
+                Ok(Value::string(new_str))
             }
             (Value::StringLiteral(str1), Value::String(str2)) => {
                 let mut new_str = str2.deref().clone();
                 let str1 = interner.resolve(str1);
                 new_str.insert_str(0, str1);
-                Some(Value::string(new_str))
+                Ok(Value::string(new_str))
             }
             (Value::StringLiteral(str1), Value::StringLiteral(str2)) => {
                 let mut new_str = String::new();
@@ -109,82 +116,66 @@ impl Value {
                 let str2 = interner.resolve(str2);
                 new_str.push_str(str1);
                 new_str.push_str(str2);
-                Some(Value::string(new_str))
+                Ok(Value::string(new_str))
             }
-            _ => None,
+            (lhs, rhs) => invalid_binary(&lhs, &rhs),
         }
     }
 
-    pub fn sub(self, other: Self) -> Option<Value> {
+    pub fn sub(self, other: Self) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::number(num1 - num2)),
-            _ => None,
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::number(num1 - num2)),
+            (lhs, rhs) => invalid_binary(&lhs, &rhs),
         }
     }
 
-    pub fn mul(self, other: Self) -> Option<Value> {
+    pub fn mul(self, other: Self) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::number(num1 * num2)),
-            _ => None,
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::number(num1 * num2)),
+            (lhs, rhs) => invalid_binary(&lhs, &rhs),
         }
     }
 
-    pub fn div(self, other: Self) -> Option<Value> {
+    pub fn div(self, other: Self) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::number(num1 / num2)),
-            _ => None,
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::number(num1 / num2)),
+            (lhs, rhs) => invalid_binary(&lhs, &rhs),
         }
     }
 
-    pub fn eq(&self, other: &Self, interner: &Interner) -> Option<Value> {
+    pub fn eq(&self, other: &Self, interner: &Interner) -> Value {
+        Value::Bool(self.is_equal(other, interner))
+    }
+
+    pub fn neq(&self, other: &Self, interner: &Interner) -> Value {
+        Value::Bool(!self.is_equal(other, interner))
+    }
+
+    pub fn gt(&self, other: &Self) -> OpResult {
         match (self, other) {
-            (Value::Nil, Value::Nil) => Some(Value::bool(true)),
-            (Value::Bool(b1), Value::Bool(b2)) => Some(Value::bool(b1 == b2)),
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::bool(num1 == num2)),
-            (Value::String(str1), Value::String(str2)) => Some(Value::bool(str1 == str2)),
-            (Value::Object(_), Value::Object(_)) => unimplemented!(),
-            (Value::String(str1), Value::StringLiteral(str2)) => {
-                Some(Value::bool(str1.as_str() == interner.resolve(*str2)))
-            }
-            (Value::StringLiteral(str1), Value::String(str2)) => {
-                Some(Value::bool(interner.resolve(*str1) == str2.as_str()))
-            }
-            (Value::StringLiteral(str1), Value::StringLiteral(str2)) => {
-                Some(Value::bool(str1 == str2))
-            }
-            _ => Some(Value::bool(false)),
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::bool(*num1 > *num2)),
+            (lhs, rhs) => invalid_binary(lhs, rhs),
         }
     }
 
-    pub fn neq(&self, other: &Self, interner: &Interner) -> Option<Value> {
-        self.eq(other, interner)?.not()
-    }
-
-    pub fn gt(&self, other: &Self) -> Option<Value> {
+    pub fn ge(&self, other: &Self) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::bool(*num1 > *num2)),
-            _ => None,
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::bool(*num1 >= *num2)),
+            (lhs, rhs) => invalid_binary(lhs, rhs),
         }
     }
 
-    pub fn ge(&self, other: &Self) -> Option<Value> {
+    pub fn lt(&self, other: &Self) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::bool(*num1 >= *num2)),
-            _ => None,
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::bool(*num1 < *num2)),
+            (lhs, rhs) => invalid_binary(lhs, rhs),
         }
     }
 
-    pub fn lt(&self, other: &Self) -> Option<Value> {
+    pub fn le(&self, other: &Self) -> OpResult {
         match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::bool(*num1 < *num2)),
-            _ => None,
-        }
-    }
-
-    pub fn le(&self, other: &Self) -> Option<Value> {
-        match (self, other) {
-            (Value::Number(num1), Value::Number(num2)) => Some(Value::bool(*num1 <= *num2)),
-            _ => None,
+            (Value::Number(num1), Value::Number(num2)) => Ok(Value::bool(*num1 <= *num2)),
+            (lhs, rhs) => invalid_binary(lhs, rhs),
         }
     }
 
@@ -204,7 +195,25 @@ impl Value {
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedValue<'a, 'b> {
         DisplayedValue {
             value: self,
-            interner: interner,
+            interner,
+        }
+    }
+
+    fn is_equal(&self, other: &Self, interner: &Interner) -> bool {
+        match (self, other) {
+            (Value::Nil, Value::Nil) => true,
+            (Value::Bool(b1), Value::Bool(b2)) => b1 == b2,
+            (Value::Number(num1), Value::Number(num2)) => num1 == num2,
+            (Value::String(str1), Value::String(str2)) => str1 == str2,
+            (Value::Object(_), Value::Object(_)) => unimplemented!(),
+            (Value::String(str1), Value::StringLiteral(str2)) => {
+                str1.as_str() == interner.resolve(*str2)
+            }
+            (Value::StringLiteral(str1), Value::String(str2)) => {
+                interner.resolve(*str1) == str2.as_str()
+            }
+            (Value::StringLiteral(str1), Value::StringLiteral(str2)) => str1 == str2,
+            _ => false,
         }
     }
 }
@@ -247,4 +256,12 @@ impl Clone for Value {
             Value::StringLiteral(key) => Value::StringLiteral(*key),
         }
     }
+}
+
+fn invalid_unary(value: &Value) -> OpResult {
+    Err(InvalidOp::Unary(value.name()))
+}
+
+fn invalid_binary(left: &Value, right: &Value) -> OpResult {
+    Err(InvalidOp::Binary(left.name(), right.name()))
 }
