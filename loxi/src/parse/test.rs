@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use std::ops::Deref;
+
 use indoc::indoc;
 use lasso::Rodeo;
 
@@ -122,7 +124,7 @@ fn parse_to_a_correct_ast() {
     assert!(matches!(expr, Ok(_)));
 
     match expr.unwrap().statements.first().unwrap() {
-        Stmt::Expr { expr } => assert_eq!(*expr, get_reference_ast()),
+        Stmt::Expr { expr } => assert_eq!(expr.deref(), &get_reference_ast()),
         _ => assert!(false),
     };
 }

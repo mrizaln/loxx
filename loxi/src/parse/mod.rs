@@ -302,7 +302,7 @@ impl Parser {
         };
 
         Ok(Stmt::Function {
-            func: Function::new(name, params.into_boxed_slice(), body, loc),
+            func: Box::new(Function::new(name, params.into_boxed_slice(), body, loc)),
         })
     }
 
@@ -318,7 +318,7 @@ impl Parser {
         let init = peek_no_eof! { self as ["; or ="]
             if is_tok!(Operator::Equal) => {
                 self.advance();
-                Some(*self.expression().map_err(|err|err.syntax_err("<expression>"))?)
+                Some(self.expression().map_err(|err|err.syntax_err("<expression>"))?)
             },
             else tok => match tok {
                 is_tok!(Punctuation::Semicolon) => None,
@@ -379,7 +379,7 @@ impl Parser {
 
         Ok(Stmt::While {
             loc,
-            condition: *condition,
+            condition,
             body: Box::new(body),
         })
     }
@@ -417,16 +417,16 @@ impl Parser {
         // desugar the for loop into a while loop
 
         let condition = match condition {
-            Some(expr) => *expr,
-            None => val_expr!(Literal {
+            Some(expr) => expr,
+            None => Box::new(val_expr!(Literal {
                 value: TokLoc {
                     tok: token::Literal::True,
                     loc
                 }
-            }),
+            })),
         };
 
-        let body = match increment.map(|v| *v) {
+        let body = match increment {
             None => self.statement()?,
             Some(expr) => Stmt::Block {
                 statements: vec![self.statement()?, Stmt::Expr { expr }],
@@ -452,7 +452,7 @@ impl Parser {
             Ok(tok) => {
                 let value = match tok {
                     is_tok!(Punctuation::Semicolon) => None,
-                    _ => Some(*self.expression()?),
+                    _ => Some(self.expression()?),
                 };
                 let _ = peek_no_eof! { self as [";"]
                     if is_tok!(Punctuation::Semicolon) => self.advance(),
@@ -490,7 +490,7 @@ impl Parser {
         let _ = peek_no_eof! { self as [";"]
             if is_tok!(Punctuation::Semicolon) => self.advance(),
         }?;
-        Ok(Stmt::Expr { expr: *expr })
+        Ok(Stmt::Expr { expr })
     }
 
     fn if_statement(&mut self, loc: Location) -> StmtResult {
@@ -509,7 +509,7 @@ impl Parser {
 
         Ok(Stmt::If {
             loc,
-            condition: *condition,
+            condition,
             then: Box::new(then),
             otherwise: otherwise.map(|v| Box::new(v)),
         })

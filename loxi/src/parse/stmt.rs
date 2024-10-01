@@ -10,37 +10,37 @@ use super::expr::Expr;
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Stmt {
     Expr {
-        expr: Expr,
+        expr: Box<Expr>,
     },
     Print {
         loc: Location,
-        expr: Expr,
+        expr: Box<Expr>,
     },
     Var {
         loc: Location,
         name: Spur,
-        init: Option<Expr>,
+        init: Option<Box<Expr>>,
     },
     Block {
         statements: Vec<Stmt>,
     },
     If {
         loc: Location,
-        condition: Expr,
+        condition: Box<Expr>,
         then: Box<Stmt>,
         otherwise: Option<Box<Stmt>>,
     },
     While {
         loc: Location,
-        condition: Expr,
+        condition: Box<Expr>,
         body: Box<Stmt>,
     },
     Function {
-        func: Function,
+        func: Box<Function>,
     },
     Return {
         loc: Location,
-        value: Option<Expr>,
+        value: Option<Box<Expr>>,
     },
 }
 
@@ -131,7 +131,7 @@ impl Stmt {
             }
             // should I really clone here?
             Stmt::Function { func } => {
-                env.define(func.name, Value::function(func.clone()));
+                env.define(func.name, Value::function(*func.clone()));
                 Ok(Unwind::None)
             }
             Stmt::Return { value, loc } => {
