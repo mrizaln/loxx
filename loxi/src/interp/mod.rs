@@ -117,7 +117,7 @@ impl Interpreter {
                 };
 
                 // TODO: add location metadata
-                self.environment.define(name.clone(), value);
+                self.environment.define(*name, value);
                 Ok(Unwind::None)
             }
             Stmt::Block { statements } => {

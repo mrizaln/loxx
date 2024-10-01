@@ -101,7 +101,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     }
 
     // interpreting
-    let _ = interpreter.interpret(program).map_err(|err| {
+    interpreter.interpret(program).map_err(|err| {
         print_context(&lines, err.loc());
         println_red!("{}", err);
         LoxError::RuntimeError
@@ -120,7 +120,7 @@ pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
             true => return Err(LoxError::EmptyError),
             false => {
                 // make sure the content of the file ends with newline
-                if string.chars().last().unwrap() != '\n' {
+                if !string.ends_with('\n') {
                     string.push('\n');
                 }
             }
@@ -142,9 +142,8 @@ pub fn run_prompt() -> io::Result<()> {
         print!(">>> ");
         stdout().flush().expect("Unable to flush stdout");
 
-        match stdin().read_line(&mut line)? {
-            0 => break, // EOF reached
-            _ => (),
+        if stdin().read_line(&mut line)? == 0 {
+            break;
         }
 
         if let Err(err) = run(&line, RunMode::Normal) {

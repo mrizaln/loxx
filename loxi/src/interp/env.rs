@@ -1,13 +1,14 @@
+use core::panic;
 use std::cell::{RefCell, RefMut};
 
-use fnv::FnvHashMap;
 use lasso::Spur;
+use rustc_hash::FxHashMap;
 
 use super::value::Value;
 
 #[derive(Debug)]
 pub struct Env {
-    stack: RefCell<Vec<FnvHashMap<Spur, Value>>>,
+    stack: RefCell<Vec<FxHashMap<Spur, Value>>>,
 }
 
 #[must_use = "EnvGuard lifetime defines the lifetime of the scope, it will immediately drop if not used"]
@@ -19,7 +20,7 @@ pub struct EnvGuard<'a> {
 impl Env {
     pub fn new() -> Self {
         Self {
-            stack: RefCell::new(vec![FnvHashMap::default()]),
+            stack: RefCell::new(vec![FxHashMap::default()]),
         }
     }
 
@@ -32,7 +33,7 @@ impl Env {
     }
 
     pub fn create_scope(&self) -> EnvGuard<'_> {
-        self.stack.borrow_mut().push(FnvHashMap::default());
+        self.stack.borrow_mut().push(FxHashMap::default());
         EnvGuard {
             stack: self,
             index: self.len() - 1,
@@ -44,23 +45,28 @@ impl Env {
         map.insert(key, value);
     }
 
-    pub fn get_current(&self, key: Spur) -> Option<RefMut<'_, Value>> {
-        let map = self.get_map(self.index());
+    pub fn get_at(&self, key: Spur, index: usize) -> Option<RefMut<'_, Value>> {
+        if index >= self.len() {
+            panic!(
+                "index exceed the len of vec (index: {}, size: {})",
+                index,
+                self.len()
+            );
+        }
+        let map = self.get_map(index);
         RefMut::filter_map(map, |m| m.get_mut(&key)).ok()
     }
 
     pub fn get(&self, key: Spur) -> Option<RefMut<'_, Value>> {
         for i in (0..=self.index()).rev() {
-            let map = self.get_map(i);
-            let value = RefMut::filter_map(map, |m| m.get_mut(&key)).ok();
-            if value.is_some() {
-                return value;
+            if let Some(value) = self.get_at(key, i) {
+                return Some(value);
             }
         }
         None
     }
 
-    fn get_map(&self, index: usize) -> RefMut<'_, FnvHashMap<Spur, Value>> {
+    fn get_map(&self, index: usize) -> RefMut<'_, FxHashMap<Spur, Value>> {
         let stack = self.stack.borrow_mut();
         RefMut::map(stack, |stack| {
             stack.get_mut(index).unwrap_or_else(|| {

@@ -72,9 +72,9 @@ impl Literal {
     }
 }
 
-impl Into<char> for &Punctuation {
-    fn into(self) -> char {
-        match self {
+impl From<&Punctuation> for char {
+    fn from(val: &Punctuation) -> Self {
+        match val {
             Punctuation::ParenLeft => '(',
             Punctuation::ParenRight => ')',
             Punctuation::BraceLeft => '{',
@@ -86,9 +86,9 @@ impl Into<char> for &Punctuation {
     }
 }
 
-impl Into<&str> for &Punctuation {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&Punctuation> for &str {
+    fn from(val: &Punctuation) -> Self {
+        match val {
             Punctuation::ParenLeft => "(",
             Punctuation::ParenRight => ")",
             Punctuation::BraceLeft => "{",
@@ -117,9 +117,9 @@ impl TryFrom<char> for Punctuation {
     }
 }
 
-impl Into<&str> for &Operator {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&Operator> for &str {
+    fn from(val: &Operator) -> Self {
+        match val {
             Operator::Bang => "!",
             Operator::BangEqual => "!=",
             Operator::Equal => "=",
@@ -158,9 +158,9 @@ impl TryFrom<&str> for Operator {
     }
 }
 
-impl Into<&str> for &Keyword {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&Keyword> for &str {
+    fn from(val: &Keyword) -> Self {
+        match val {
             Keyword::True => "true",
             Keyword::False => "false",
             Keyword::And => "and",

@@ -72,30 +72,30 @@ impl Variable {
     }
 }
 
-impl Into<&str> for &Literal {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&Literal> for &str {
+    fn from(val: &Literal) -> Self {
+        match val {
             Literal::Number(_) => "<number>",
             Literal::String(_) => "<string>",
-            Literal::True => "true".into(),
-            Literal::False => "false".into(),
-            Literal::Nil => "nil".into(),
+            Literal::True => "true",
+            Literal::False => "false",
+            Literal::Nil => "nil",
         }
     }
 }
 
-impl Into<&str> for &UnaryOp {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&UnaryOp> for &str {
+    fn from(val: &UnaryOp) -> Self {
+        match val {
             UnaryOp::Minus => "-",
             UnaryOp::Not => "!",
         }
     }
 }
 
-impl Into<&str> for &BinaryOp {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&BinaryOp> for &str {
+    fn from(val: &BinaryOp) -> Self {
+        match val {
             BinaryOp::Equal => "==",
             BinaryOp::NotEqual => "!=",
             BinaryOp::Less => "<",
@@ -110,17 +110,17 @@ impl Into<&str> for &BinaryOp {
     }
 }
 
-impl Into<&str> for &LogicalOp {
-    fn into(self) -> &'static str {
-        match self {
+impl From<&LogicalOp> for &str {
+    fn from(val: &LogicalOp) -> Self {
+        match val {
             LogicalOp::And => "and",
             LogicalOp::Or => "or",
         }
     }
 }
 
-impl Into<&str> for &Variable {
-    fn into(self) -> &'static str {
+impl From<&Variable> for &str {
+    fn from(_val: &Variable) -> Self {
         "<variable>"
     }
 }

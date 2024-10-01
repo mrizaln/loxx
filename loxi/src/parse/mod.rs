@@ -19,78 +19,78 @@ pub mod stmt;
 mod test;
 pub mod token;
 
-///! Lox Grammar (unfinished)
-///  ------------------------
-/// program     -> declaration* EOF ;
-///
-/// declaration -> fun_decl
-///                 | var_decl
-///                 | statement ;
-///
-/// fun_dec     -> "fun" function ;
-///
-/// function    -> IDENTIFIER "(" parameters? ")" block ;
-///
-/// parameters  -> IDENTIFIER ( "," IDENTIFIER )* ;
-///
-/// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
-///
-/// statement   -> expr_stmt
-///                 | for_stmt
-///                 | if_stmt
-///                 | print_stmt
-///                 | return_stmt
-///                 | while_stmt
-///                 | block ;
-///
-/// block       -> "{" declaration* "}"
-///
-/// expr_stmt   -> expression ";" ;
-///
-/// if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
-///
-/// print_stmt  -> "print" expression ";" ;
-///
-/// while_stmt  -> "while" "(" expression ")" statement ;
-///
-/// for_stmt    -> "for" "(" (var_decl | expr_stmt | ";")
-///                 expression? ";"
-///                 expression? ")" statement ;
-///
-/// return_stmt -> "return" expression? ";" ;
-///
-/// expression  -> assignment ;
-///
-/// assignment  -> IDENTIFIER "=" assignment
-///                 | logical_or ;
-///
-/// logical_or  -> logical_and ( "or" logical_and )* ;
-///
-/// logical_and -> equality ( "and" equality )* ;
-///
-/// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
-///
-/// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-///
-/// term        -> factor ( ( "-" | "+" ) factor )* ;
-///
-/// factor      -> unary ( ( "/" | "*" ) unary )* ;
-///
-/// unary       -> ( "!" | "-" ) unary | call ;
-///
-/// call        -> primary ( "(" arguments? ")" )* ;
-///
-/// arguments   -> expression ( "," expression )* ;
-///
-/// primary     -> NUMBER
-///                 | STRING
-///                 | "true"
-///                 | "false"
-///                 | "nil"
-///                 | grouping
-///                 | IDENTIFIER ;
-///
-/// grouping    -> "(" expression ")"
+// Lox Grammar (unfinished)
+//  ------------------------
+// program     -> declaration* EOF ;
+//
+// declaration -> fun_decl
+//                 | var_decl
+//                 | statement ;
+//
+// fun_dec     -> "fun" function ;
+//
+// function    -> IDENTIFIER "(" parameters? ")" block ;
+//
+// parameters  -> IDENTIFIER ( "," IDENTIFIER )* ;
+//
+// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
+//
+// statement   -> expr_stmt
+//                 | for_stmt
+//                 | if_stmt
+//                 | print_stmt
+//                 | return_stmt
+//                 | while_stmt
+//                 | block ;
+//
+// block       -> "{" declaration* "}"
+//
+// expr_stmt   -> expression ";" ;
+//
+// if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
+//
+// print_stmt  -> "print" expression ";" ;
+//
+// while_stmt  -> "while" "(" expression ")" statement ;
+//
+// for_stmt    -> "for" "(" (var_decl | expr_stmt | ";")
+//                 expression? ";"
+//                 expression? ")" statement ;
+//
+// return_stmt -> "return" expression? ";" ;
+//
+// expression  -> assignment ;
+//
+// assignment  -> IDENTIFIER "=" assignment
+//                 | logical_or ;
+//
+// logical_or  -> logical_and ( "or" logical_and )* ;
+//
+// logical_and -> equality ( "and" equality )* ;
+//
+// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
+//
+// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+//
+// term        -> factor ( ( "-" | "+" ) factor )* ;
+//
+// factor      -> unary ( ( "/" | "*" ) unary )* ;
+//
+// unary       -> ( "!" | "-" ) unary | call ;
+//
+// call        -> primary ( "(" arguments? ")" )* ;
+//
+// arguments   -> expression ( "," expression )* ;
+//
+// primary     -> NUMBER
+//                 | STRING
+//                 | "true"
+//                 | "false"
+//                 | "nil"
+//                 | grouping
+//                 | IDENTIFIER ;
+//
+// grouping    -> "(" expression ")"
 
 #[derive(Debug, Error)]
 pub enum SyntaxError {
@@ -252,7 +252,7 @@ impl Parser {
 
     fn function_declaration(&mut self, loc: Location) -> StmtResult {
         let name = peek_no_eof! { self as ["<identifier>"]
-            if is_tok!(Literal::Identifier(name, _)) => name.clone(),
+            if is_tok!(Literal::Identifier(name, _)) => *name,
         }?;
         self.advance();
 
@@ -311,7 +311,7 @@ impl Parser {
         //       and make it a SyntaxError
 
         let (name, loc) = peek_no_eof! { self as ["<identifier>"]
-            if is_tok!(Literal::Identifier(name, loc)) => (name.clone(), loc.clone()),
+            if is_tok!(Literal::Identifier(name, loc)) => (*name, *loc),
         }?;
         self.advance();
 
@@ -511,7 +511,7 @@ impl Parser {
             loc,
             condition,
             then: Box::new(then),
-            otherwise: otherwise.map(|v| Box::new(v)),
+            otherwise: otherwise.map(Box::new),
         })
     }
 
@@ -589,10 +589,11 @@ impl Parser {
 
         loop {
             match self.peek()? {
-                is_tok!(Punctuation::ParenLeft) => Ok({
+                is_tok!(Punctuation::ParenLeft) => {
                     let loc = self.advance().unwrap().loc();
                     expr = self.finish_call(loc, expr)?;
-                }),
+                    Ok(())
+                }
                 _ => break,
             }?;
         }
@@ -643,7 +644,8 @@ impl Parser {
         let loc = curr.loc();
 
         let lit = |lit| val_expr! { Literal { value: TokLoc { tok: lit, loc } } };
-        let var = |name| ref_expr! { Variable { var: TokLoc { tok: token::Variable { name: name }, loc } } };
+        let var =
+            |name| ref_expr! { Variable { var: TokLoc { tok: token::Variable { name }, loc } } };
 
         type Lit = token::Literal;
 
@@ -652,9 +654,9 @@ impl Parser {
             is_tok!(Keyword::False) => lit(Lit::False),
             is_tok!(Keyword::Nil) => lit(Lit::Nil),
 
-            is_tok!(Literal::String(str, _)) => lit(Lit::String(str.clone())),
+            is_tok!(Literal::String(str, _)) => lit(Lit::String(*str)),
             is_tok!(Literal::Number(num, _)) => lit(Lit::Number(*num)),
-            is_tok!(Literal::Identifier(name, _)) => var(name.clone()),
+            is_tok!(Literal::Identifier(name, _)) => var(*name),
 
             is_tok!(Punctuation::ParenLeft) => {
                 let expr = self.expression().map_err(|e| e.missing_delim(")", loc))?;
@@ -702,7 +704,7 @@ impl Parser {
             self.advance();
             expr = Box::new(val_expr!(Logical {
                 left: expr,
-                kind: kind,
+                kind,
                 right: inner(self).map_err(|e| e.syntax_err("<expression>"))?,
             }));
         }

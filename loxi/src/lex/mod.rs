@@ -148,37 +148,35 @@ impl<'a, 'b> Lexer<'a, 'b> {
         }
     }
 
-    #[rustfmt::skip]
     #[cfg(feature = "unicode")]
     fn scan_token(&mut self, current: usize, single: char) {
         match single.is_ascii() {
             true => match single {
-                '\n'                        => self.newline_handler(current),
-                '/'                         => self.slash_handler(),
-                '"'                         => self.string_handler(current),
-                c if c.is_digit(10)         => self.number_handler(current),
-                c if c.is_whitespace()      => self.whitespace_handler(),
+                '\n' => self.newline_handler(current),
+                '/' => self.slash_handler(),
+                '"' => self.string_handler(current),
+                c if c.is_ascii_digit() => self.number_handler(current),
+                c if c.is_whitespace() => self.whitespace_handler(),
                 c if is_ascii_identifier(c) => self.ascii_identifier_handler(current, single),
-                _                           => self.other_handler(single),
+                _ => self.other_handler(single),
             },
             false => match single {
-                c if c.is_whitespace()      => self.whitespace_handler(),
-                _                           => self.unicode_identifier_handler(current, single),
+                c if c.is_whitespace() => self.whitespace_handler(),
+                _ => self.unicode_identifier_handler(current, single),
             },
         }
     }
 
-    #[rustfmt::skip]
     #[cfg(not(feature = "unicode"))]
     fn scan_token(&mut self, current: usize, single: char) {
         match single {
-            '\n'                        => self.newline_handler(current),
-            '/'                         => self.slash_handler(),
-            '"'                         => self.string_handler(current),
-            c if c.is_digit(10)         => self.number_handler(current),
-            c if c.is_whitespace()      => self.whitespace_handler(),
+            '\n' => self.newline_handler(current),
+            '/' => self.slash_handler(),
+            '"' => self.string_handler(current),
+            c if c.is_ascii_digit() => self.number_handler(current),
+            c if c.is_whitespace() => self.whitespace_handler(),
             c if is_ascii_identifier(c) => self.ascii_identifier_handler(current, single),
-            _                           => self.other_handler(single),
+            _ => self.other_handler(single),
         }
     }
 
@@ -231,13 +229,13 @@ impl<'a, 'b> Lexer<'a, 'b> {
 
     fn number_handler(&mut self, current: usize) {
         let start = self.line.to_loc();
-        let count = self.advance_while(|(_, ch)| ch.is_digit(10));
+        let count = self.advance_while(|(_, ch)| ch.is_ascii_digit());
         let mut index = current + count;
         let mut trailing_dot = false;
 
         if let Some((_, '.')) = self.peek() {
             let _ = self.advance();
-            let count = self.advance_while(|(_, ch)| ch.is_digit(10));
+            let count = self.advance_while(|(_, ch)| ch.is_ascii_digit());
             if count > 0 {
                 index += count + 1;
             } else {
@@ -357,10 +355,9 @@ impl<'a, 'b> Lexer<'a, 'b> {
     }
 
     fn advance(&mut self) -> Option<(usize, char)> {
-        self.chars.next().and_then(|(i, ch)| {
+        self.chars.next().inspect(|(_, ch)| {
             self.line.column += ch.width().unwrap_or(0);
-            self.line.char = ch;
-            Some((i, ch))
+            self.line.char = *ch;
         })
     }
 
@@ -376,7 +373,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
             let size = res.1.len_utf8();
             match cont {
                 true => size,
-                false => std::usize::MAX,
+                false => usize::MAX,
             }
         };
 
@@ -393,10 +390,7 @@ impl<'a, 'b> Lexer<'a, 'b> {
     }
 
     fn if_next_is(&mut self, ch: char) -> bool {
-        match self.chars.peek() {
-            Some((_, c)) if *c == ch => true,
-            _ => false,
-        }
+        matches!(self.chars.peek(), Some((_, c)) if *c == ch)
     }
 }
 

@@ -73,8 +73,9 @@ impl Callable for Function {
             .into());
         }
 
-        for (param, arg) in self.params.iter().zip(args.iter()) {
-            env.define(param.clone(), arg.clone());
+        // https://github.com/rust-lang/rust/issues/59878
+        for (i, arg) in args.into_vec().into_iter().enumerate() {
+            env.define(self.params[i], arg);
         }
 
         for stmt in self.body.iter() {

@@ -88,13 +88,11 @@ fn get_reference_ast() -> Expr {
         right: Box::new(lit4),
     });
 
-    let bin_eqeq = val_expr!(Binary {
+    val_expr!(Binary {
         left: Box::new(bin_lt),
         operator: eqeq,
         right: Box::new(litf),
-    });
-
-    bin_eqeq
+    })
 }
 
 #[test]
@@ -121,10 +119,10 @@ fn parse_to_a_correct_ast() {
     let mut parser = Parser::new();
     let expr = parser.parse(result.tokens);
 
-    assert!(matches!(expr, Ok(_)));
+    assert!(expr.is_ok());
 
     match expr.unwrap().statements.first().unwrap() {
         Stmt::Expr { expr } => assert_eq!(expr.deref(), &get_reference_ast()),
-        _ => assert!(false),
+        _ => unreachable!(),
     };
 }
