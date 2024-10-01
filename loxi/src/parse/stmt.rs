@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use crate::interp::interner::{Interner, Key};
-use crate::interp::{function::Function, value::Value};
+use crate::interp::{function::UserDefined, value::Value};
 use crate::util::Location;
 
 use super::expr::Expr;
@@ -35,7 +35,7 @@ pub enum Stmt {
         body: Box<Stmt>,
     },
     Function {
-        func: Box<Function>,
+        func: Box<UserDefined>,
     },
     Return {
         loc: Location,

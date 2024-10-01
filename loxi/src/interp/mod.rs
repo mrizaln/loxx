@@ -1,4 +1,5 @@
 use std::cell::RefMut;
+use std::ops::Deref;
 
 use thiserror::Error;
 
@@ -7,8 +8,7 @@ use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::util::{Location, TokLoc};
 
 use self::env::Env;
-use self::function::Callable;
-use self::function::NativeFunction;
+use self::function::Native;
 use self::interner::Interner;
 use self::value::Value;
 
@@ -54,14 +54,14 @@ impl RuntimeError {
 }
 
 pub struct Interpreter {
-    environment: Env,
+    env: Env,
     interner: Interner,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         let mut interp = Interpreter {
-            environment: Env::new(),
+            env: Env::new(),
             interner: Interner::new(),
         };
         interp.populate_env();
@@ -86,8 +86,8 @@ impl Interpreter {
 
     fn populate_env(&mut self) {
         let name = self.interner.get_or_intern("clock");
-        let clock = NativeFunction::new(name, Box::new([]), native_functions::clock);
-        self.environment.define(name, Value::native_function(clock));
+        let clock = Native::new(name, Box::new([]), native_functions::clock);
+        self.env.define(name, Value::native_function(clock));
     }
 
     fn execute(&self, stmt: &Stmt) -> Result<Unwind, RuntimeError> {
@@ -118,11 +118,11 @@ impl Interpreter {
                 };
 
                 // TODO: add location metadata
-                self.environment.define(*name, value);
+                self.env.define(*name, value);
                 Ok(Unwind::None)
             }
             Stmt::Block { statements } => {
-                let _local = self.environment.create_scope();
+                let _local = self.env.create_scope();
                 for stmt in statements {
                     if let Unwind::Return(value, loc) = self.execute(stmt)? {
                         return Ok(Unwind::Return(value, loc));
@@ -163,8 +163,7 @@ impl Interpreter {
             }
             // should I really clone here?
             Stmt::Function { func } => {
-                self.environment
-                    .define(func.name, Value::function(*func.clone()));
+                self.env.define(func.name, Value::function(*func.clone()));
                 Ok(Unwind::None)
             }
             Stmt::Return { value, loc } => {
@@ -268,22 +267,20 @@ impl Interpreter {
             }
             ValExpr::Call { callee, loc, args } => {
                 let callee = self.eval_cloned(callee)?;
-                let args = args
-                    .into_iter()
-                    .map(|a| self.eval_cloned(a))
-                    .collect::<Result<Box<[_]>, _>>()?;
 
                 match callee {
-                    Value::Function(expr) => {
-                        let _local = self.environment.create_scope();
-                        let result =
-                            expr.call(args, &self.environment, |stmt| self.execute(stmt))?;
-                        Ok(result)
-                    }
-                    Value::NativeFunction(expr) => {
-                        let _local = self.environment.create_scope();
-                        let result = expr.call(args, &self.environment, |_| unreachable!())?;
-                        Ok(result)
+                    Value::Function(func) => {
+                        let args = args
+                            .into_iter()
+                            .map(|a| self.eval_cloned(a))
+                            .collect::<Result<Box<[_]>, _>>()?;
+
+                        match func.deref() {
+                            function::Function::Native(func) => func.call(args, &self.env),
+                            function::Function::UserDefined(func) => {
+                                func.call(args, &self.env, |stmt| self.execute(stmt))
+                            }
+                        }
                     }
                     _ => Err(RuntimeError::NotCallable(*loc)),
                 }
@@ -295,14 +292,14 @@ impl Interpreter {
         match expr {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
-            } => self.environment.get(tok.name).ok_or_else(|| {
+            } => self.env.get(tok.name).ok_or_else(|| {
                 let var_name = self.interner.resolve(tok.name);
                 RuntimeError::UndefinedVariable(*loc, var_name.to_string())
             }),
             RefExpr::Grouping { expr } => self.eval_ref(expr),
             RefExpr::Assignment { var, value } => {
                 let value = self.eval_cloned(value)?;
-                self.environment
+                self.env
                     .get(var.tok.name)
                     .ok_or_else(|| {
                         let var_name = self.interner.resolve(var.tok.name);

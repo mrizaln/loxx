@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::{fmt::Display, ops::Deref};
 
-use super::function::{Function, NativeFunction};
+use super::function::{Function, UserDefined, Native};
 use super::interner::{Interner, Key};
 use super::object::Object;
 
@@ -13,7 +13,6 @@ pub enum Value {
     String(Rc<String>),
     Object(Rc<Object>),
     Function(Rc<Function>),
-    NativeFunction(Rc<NativeFunction>),
 
     /// `StringLiteral` is a special case of string, the value is static.
     /// It can only produces real `String` if it was operated on.
@@ -58,12 +57,12 @@ impl Value {
         Value::Object(Rc::new(obj))
     }
 
-    pub fn function(func: Function) -> Self {
-        Value::Function(Rc::new(func))
+    pub fn function(func: UserDefined) -> Self {
+        Value::Function(Rc::new(Function::UserDefined(func)))
     }
 
-    pub fn native_function(func: NativeFunction) -> Self {
-        Value::NativeFunction(Rc::new(func))
+    pub fn native_function(func: Native) -> Self {
+        Value::Function(Rc::new(Function::Native(func)))
     }
 
     pub fn string_literal(key: Key) -> Self {
@@ -187,7 +186,6 @@ impl Value {
             Value::String(_) => "<string>",
             Value::Object(_) => "<object>",
             Value::Function(_) => "<function>",
-            Value::NativeFunction(_) => "<native_function>",
             Value::StringLiteral(_) => "<string_literal>",
         }
     }
@@ -227,14 +225,16 @@ impl Display for DisplayedValue<'_, '_> {
             Value::Number(num) => write!(f, "{num}"),
             Value::String(str) => write!(f, "{}", str.as_str()),
             Value::Object(_) => write!(f, "<object>"),
-            Value::Function(func) => {
-                let name = interner.resolve(func.name);
-                write!(f, "<fun {name}>")
-            }
-            Value::NativeFunction(func) => {
-                let name = interner.resolve(func.name);
-                write!(f, "<native_fun {name}>")
-            }
+            Value::Function(func) => match func.deref() {
+                Function::UserDefined(func) => {
+                    let name = interner.resolve(func.name);
+                    write!(f, "<fun {name}>")
+                }
+                Function::Native(func) => {
+                    let name = interner.resolve(func.name);
+                    write!(f, "<native_fun {name}>")
+                }
+            },
             Value::StringLiteral(key) => {
                 let name = interner.resolve(*key);
                 write!(f, "{}", name)
@@ -250,7 +250,6 @@ impl Clone for Value {
             Value::Bool(b) => Value::Bool(*b),
             Value::Number(num) => Value::Number(*num),
             Value::Function(fun) => Value::Function(Rc::clone(fun)),
-            Value::NativeFunction(fun) => Value::NativeFunction(Rc::clone(fun)),
             Value::String(str) => Value::String(Rc::clone(str)),
             Value::Object(obj) => Value::Object(Rc::clone(obj)),
             Value::StringLiteral(key) => Value::StringLiteral(*key),

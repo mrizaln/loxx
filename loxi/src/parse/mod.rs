@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use thiserror::Error;
 
-use crate::interp::function::Function;
+use crate::interp::function::UserDefined;
 use crate::interp::interner::Key;
 use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
@@ -302,7 +302,7 @@ impl Parser {
         };
 
         Ok(Stmt::Function {
-            func: Box::new(Function::new(name, params.into_boxed_slice(), body, loc)),
+            func: Box::new(UserDefined::new(name, params.into_boxed_slice(), body, loc)),
         })
     }
 

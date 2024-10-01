@@ -9,16 +9,23 @@ use super::interner::Key;
 use super::RuntimeError;
 use super::{env::Env, value::Value};
 
-/// For anything callable in Lox
-pub trait Callable {
-    fn arity(&self) -> usize;
-    fn call<F>(&self, args: Box<[Value]>, env: &Env, f: F) -> Result<Value, RuntimeError>
-    where
-        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>;
+#[derive(Debug, PartialEq, PartialOrd)]
+pub enum Function {
+    Native(Native),
+    UserDefined(UserDefined),
+}
+
+type NativeFn = fn(args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError>;
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub struct Native {
+    pub name: Key,
+    pub params: Box<[Key]>,
+    pub body: NativeFn,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct Function {
+pub struct UserDefined {
     pub name: Key,
     pub params: Box<[Key]>,
     pub body: Box<[Stmt]>,
@@ -35,6 +42,30 @@ pub enum FunctionError {
     },
 }
 
+impl Native {
+    pub fn new(name: Key, params: Box<[Key]>, body: NativeFn) -> Self {
+        Self { name, params, body }
+    }
+
+    pub fn arity(&self) -> usize {
+        self.params.len()
+    }
+
+    pub fn call(&self, args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError> {
+        if args.len() != self.arity() {
+            return Err(FunctionError::MismatchedArgument {
+                loc: Location::new(0, 0),
+                expect: self.arity(),
+                got: args.len(),
+            }
+            .into());
+        }
+
+        let _local = env.create_scope();
+        (self.body)(args, env)
+    }
+}
+
 impl FunctionError {
     pub fn loc(&self) -> Location {
         match self {
@@ -43,7 +74,7 @@ impl FunctionError {
     }
 }
 
-impl Function {
+impl UserDefined {
     pub fn new(name: Key, params: Box<[Key]>, body: Box<[Stmt]>, loc: Location) -> Self {
         Self {
             name,
@@ -52,15 +83,12 @@ impl Function {
             loc,
         }
     }
-}
 
-// TODO: Implement return statement
-impl Callable for Function {
-    fn arity(&self) -> usize {
+    pub fn arity(&self) -> usize {
         self.params.len()
     }
 
-    fn call<F>(&self, args: Box<[Value]>, env: &Env, mut f: F) -> Result<Value, RuntimeError>
+    pub fn call<F>(&self, args: Box<[Value]>, env: &Env, mut exec: F) -> Result<Value, RuntimeError>
     where
         F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
     {
@@ -73,54 +101,19 @@ impl Callable for Function {
             .into());
         }
 
+        let _local = env.create_scope();
+
         // https://github.com/rust-lang/rust/issues/59878
         for (i, arg) in args.into_vec().into_iter().enumerate() {
-            env.define(self.params[i], arg);
+            env.define(self.params[i], arg.clone());
         }
 
         for stmt in self.body.iter() {
-            if let Unwind::Return(value, _) = f(stmt)? {
+            if let Unwind::Return(value, _) = exec(stmt)? {
                 return Ok(value);
             }
         }
 
         Ok(Value::nil())
-    }
-}
-
-type NativeFn = fn(args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError>;
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct NativeFunction {
-    pub name: Key,
-    pub params: Box<[Key]>,
-    pub body: NativeFn,
-}
-
-impl NativeFunction {
-    pub fn new(name: Key, params: Box<[Key]>, body: NativeFn) -> Self {
-        Self { name, params, body }
-    }
-}
-
-impl Callable for NativeFunction {
-    fn arity(&self) -> usize {
-        self.params.len()
-    }
-
-    fn call<F>(&self, args: Box<[Value]>, env: &Env, _: F) -> Result<Value, RuntimeError>
-    where
-        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
-    {
-        if args.len() != self.arity() {
-            return Err(FunctionError::MismatchedArgument {
-                loc: Location::new(0, 0),
-                expect: self.arity(),
-                got: args.len(),
-            }
-            .into());
-        }
-
-        (self.body)(args, env)
     }
 }
