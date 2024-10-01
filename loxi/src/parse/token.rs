@@ -1,13 +1,12 @@
 use std::fmt::Display;
 
-use lasso::{Rodeo, Spur};
-
+use crate::interp::interner::{Interner, Key};
 use crate::util::Token;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
     Number(f64),
-    String(Spur),
+    String(Key),
     True,
     False,
     Nil,
@@ -41,33 +40,33 @@ pub enum LogicalOp {
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Variable {
-    pub name: Spur,
+    pub name: Key,
 }
 
 pub struct DisplayedLiteral<'a, 'b> {
     literal: &'a Literal,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 pub struct DisplayedVariable<'a, 'b> {
     variable: &'a Variable,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 impl Literal {
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedLiteral<'a, 'b> {
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedLiteral<'a, 'b> {
         DisplayedLiteral {
             literal: self,
-            arena,
+            interner,
         }
     }
 }
 
 impl Variable {
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedVariable<'a, 'b> {
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedVariable<'a, 'b> {
         DisplayedVariable {
             variable: self,
-            arena,
+            interner,
         }
     }
 }
@@ -155,10 +154,10 @@ impl Display for LogicalOp {
 
 impl Display for DisplayedLiteral<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.literal {
             Literal::Number(num) => write!(f, "{num}"),
-            Literal::String(str) => write!(f, r#""{}""#, arena.resolve(str)),
+            Literal::String(str) => write!(f, r#""{}""#, interner.resolve(*str)),
             Literal::True => write!(f, "true"),
             Literal::False => write!(f, "false"),
             Literal::Nil => write!(f, "nil"),
@@ -168,8 +167,8 @@ impl Display for DisplayedLiteral<'_, '_> {
 
 impl Display for DisplayedVariable<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
-        write!(f, "{}", arena.resolve(&self.variable.name))
+        let interner = self.interner;
+        write!(f, "{}", interner.resolve(self.variable.name))
     }
 }
 

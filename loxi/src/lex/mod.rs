@@ -2,10 +2,10 @@ use std::fmt::{Debug, Display, Formatter};
 use std::iter::Peekable;
 use std::str::CharIndices;
 
-use lasso::{Rodeo, Spur};
 use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
 
+use crate::interp::interner::{Interner, Key};
 use crate::util::{self, Location, TokLoc};
 use macros::tok;
 
@@ -23,7 +23,7 @@ pub enum Token {
 
 pub struct DisplayedToken<'a, 'b> {
     token: &'a Token,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 impl Token {
@@ -51,18 +51,21 @@ impl Token {
         }
     }
 
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedToken<'a, 'b> {
-        DisplayedToken { token: self, arena }
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedToken<'a, 'b> {
+        DisplayedToken {
+            token: self,
+            interner,
+        }
     }
 }
 
 impl Display for DisplayedToken<'_, '_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.token {
             Token::Literal(tokl) => {
                 let name = self.token.static_str();
-                let value = tokl.tok.display(arena);
+                let value = tokl.tok.display(interner);
                 write!(f, r#"{} Tok{{ "{}": "{}" }}"#, tokl.loc, name, value)
             }
             Token::Punctuation(tokl) => {
@@ -101,7 +104,7 @@ pub struct Lexer<'a, 'b> {
     source: &'a str,
     chars: Peekable<CharIndices<'a>>,
     lines: Vec<&'a str>,
-    str_arena: &'b mut Rodeo,
+    interner: &'b mut Interner,
     tokens: Vec<Token>,
     errors: Vec<LexError>,
     line: LineLocation,
@@ -115,12 +118,12 @@ pub struct ScanResult<'a> {
 }
 
 impl<'a, 'b> Lexer<'a, 'b> {
-    pub fn new(program: &'a str, str_arena: &'b mut Rodeo) -> Self {
+    pub fn new(program: &'a str, interner: &'b mut Interner) -> Self {
         Self {
             source: program,
             chars: program.char_indices().peekable(),
             lines: Vec::new(),
-            str_arena,
+            interner,
             tokens: Vec::new(),
             errors: Vec::new(),
             line: LineLocation {
@@ -220,8 +223,8 @@ impl<'a, 'b> Lexer<'a, 'b> {
         match index {
             Some(idx) => {
                 let value = &self.source[current + 1..idx];
-                let spur = self.intern(value);
-                self.add_token(tok!([start] -> Literal::String = spur));
+                let key = self.intern(value);
+                self.add_token(tok!([start] -> Literal::String = key));
             }
             None => self.add_error(LexError::UnterminatedString(start)),
         }
@@ -280,11 +283,11 @@ impl<'a, 'b> Lexer<'a, 'b> {
         });
         let end = current + count + single.len_utf8();
         let value = &self.source[current..end];
-        let spur = self.intern(value);
+        let key = self.intern(value);
 
         let token = match token::Keyword::try_from(value) {
             Ok(keyword) => tok! { [start] -> Keyword = keyword },
-            Err(_) => tok! { [start] -> Literal::Identifier = spur },
+            Err(_) => tok! { [start] -> Literal::Identifier = key },
         };
 
         self.add_token(token);
@@ -301,8 +304,8 @@ impl<'a, 'b> Lexer<'a, 'b> {
         });
         let end = current + count + single.len_utf8();
         let value = &self.source[current..end];
-        let spur = self.intern(value);
-        self.add_token(tok! { [start] -> Literal::Identifier = spur});
+        let key = self.intern(value);
+        self.add_token(tok! { [start] -> Literal::Identifier = key});
     }
 
     fn other_handler(&mut self, single: char) {
@@ -339,8 +342,8 @@ impl<'a, 'b> Lexer<'a, 'b> {
         ));
     }
 
-    fn intern(&mut self, str: &str) -> Spur {
-        self.str_arena.get_or_intern(str)
+    fn intern(&mut self, str: &str) -> Key {
+        self.interner.get_or_intern(str)
     }
 
     fn add_token(&mut self, token: Token) {

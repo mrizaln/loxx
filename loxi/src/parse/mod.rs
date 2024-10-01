@@ -1,8 +1,8 @@
-use lasso::Spur;
 use std::collections::VecDeque;
 use thiserror::Error;
 
 use crate::interp::function::Function;
+use crate::interp::interner::Key;
 use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
 
@@ -258,7 +258,7 @@ impl Parser {
 
         peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
 
-        let mut params = Vec::<Spur>::new();
+        let mut params = Vec::<Key>::new();
 
         match self.peek() {
             Ok(is_tok!(Punctuation::ParenRight)) => {

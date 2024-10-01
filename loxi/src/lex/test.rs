@@ -11,8 +11,8 @@ static HELLO_WORLD: &str = indoc! { r#"
 
 #[test]
 fn hello_test() {
-    let mut lex_arena = Rodeo::default();
-    let lexer = Lexer::new(HELLO_WORLD, &mut lex_arena);
+    let mut interner = Interner::default();
+    let lexer = Lexer::new(HELLO_WORLD, &mut interner);
     let result = lexer.scan();
 
     assert_eq!(result.errors.len(), 0);
@@ -20,7 +20,7 @@ fn hello_test() {
     assert_eq!(result.tokens.len(), 9);
 
     let loc = |l, c| Location { line: l, column: c };
-    let mut intern = |str| lex_arena.get_or_intern(str);
+    let mut intern = |str| interner.get_or_intern(str);
 
     let tokens = vec![
         tok! { [loc(1,1)]  -> Keyword::Var },
@@ -34,11 +34,6 @@ fn hello_test() {
         Token::Eof(Location { line: 3, column: 1 }),
     ];
 
-    for str in lex_arena.strings() {
-        println!("{str}")
-    }
-
-    // TODO: check again whether the string has different key
     for (t1, t2) in result.tokens.iter().zip(tokens) {
         assert_eq!(*t1, t2);
     }

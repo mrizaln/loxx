@@ -1,8 +1,7 @@
 use std::fmt::Display;
 
-use lasso::Rodeo;
-
 use super::token;
+use crate::interp::interner::Interner;
 use crate::util::{Location, TokLoc};
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -58,17 +57,17 @@ pub enum RefExpr {
 
 pub struct DisplayedExpr<'a, 'b> {
     expr: &'a Expr,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 pub struct DisplayedValExpr<'a, 'b> {
     expr: &'a ValExpr,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 pub struct DisplayedRefExpr<'a, 'b> {
     expr: &'a RefExpr,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 impl Expr {
@@ -76,43 +75,52 @@ impl Expr {
     /// is in Java and it's limited there to 255 arguments only.
     pub const MAX_FUNC_ARGS: usize = 255;
 
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedExpr<'a, 'b> {
-        DisplayedExpr { expr: self, arena }
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedExpr<'a, 'b> {
+        DisplayedExpr {
+            expr: self,
+            interner,
+        }
     }
 }
 
 impl ValExpr {
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedValExpr<'a, 'b> {
-        DisplayedValExpr { expr: self, arena }
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedValExpr<'a, 'b> {
+        DisplayedValExpr {
+            expr: self,
+            interner,
+        }
     }
 }
 
 impl RefExpr {
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedRefExpr<'a, 'b> {
-        DisplayedRefExpr { expr: self, arena }
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedRefExpr<'a, 'b> {
+        DisplayedRefExpr {
+            expr: self,
+            interner,
+        }
     }
 }
 
 impl Display for DisplayedExpr<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.expr {
-            Expr::ValExpr(expr) => write!(f, "{}", expr.display(arena)),
-            Expr::RefExpr(expr) => write!(f, "{}", expr.display(arena)),
+            Expr::ValExpr(expr) => write!(f, "{}", expr.display(interner)),
+            Expr::RefExpr(expr) => write!(f, "{}", expr.display(interner)),
         }
     }
 }
 
 impl Display for DisplayedValExpr<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.expr {
             ValExpr::Literal { value } => {
-                write!(f, "{}", value.tok.display(arena))
+                write!(f, "{}", value.tok.display(interner))
             }
             ValExpr::Unary { operator, right } => {
                 let op: &str = (&operator.tok).into();
-                write!(f, "({op} {})", right.display(arena))
+                write!(f, "({op} {})", right.display(interner))
             }
             ValExpr::Binary {
                 left,
@@ -120,20 +128,30 @@ impl Display for DisplayedValExpr<'_, '_> {
                 right,
             } => {
                 let op: &str = (&operator.tok).into();
-                write!(f, "({op} {} {})", left.display(arena), right.display(arena))
+                write!(
+                    f,
+                    "({op} {} {})",
+                    left.display(interner),
+                    right.display(interner)
+                )
             }
             ValExpr::Grouping { expr } => {
-                write!(f, "(group {})", expr.display(arena))
+                write!(f, "(group {})", expr.display(interner))
             }
             ValExpr::Logical { left, kind, right } => {
                 let op: &str = (&kind.tok).into();
-                write!(f, "({op} {} {})", left.display(arena), right.display(arena))
+                write!(
+                    f,
+                    "({op} {} {})",
+                    left.display(interner),
+                    right.display(interner)
+                )
             }
             ValExpr::Call { callee, args, .. } => {
-                write!(f, "(call {} ", callee.display(arena))?;
+                write!(f, "(call {} ", callee.display(interner))?;
                 write!(f, "(args")?;
                 for expr in args {
-                    write!(f, " {}", expr.display(arena))?;
+                    write!(f, " {}", expr.display(interner))?;
                 }
                 write!(f, "))")
             }
@@ -143,13 +161,13 @@ impl Display for DisplayedValExpr<'_, '_> {
 
 impl Display for DisplayedRefExpr<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.expr {
-            RefExpr::Variable { var } => write!(f, "(var {})", arena.resolve(&var.tok.name)),
-            RefExpr::Grouping { expr } => write!(f, "{}", expr.display(arena)),
+            RefExpr::Variable { var } => write!(f, "(var {})", interner.resolve(var.tok.name)),
+            RefExpr::Grouping { expr } => write!(f, "{}", expr.display(interner)),
             RefExpr::Assignment { var, value } => {
-                let name = arena.resolve(&var.tok.name);
-                write!(f, "(= {} {})", name, value.display(arena))
+                let name = interner.resolve(var.tok.name);
+                write!(f, "(= {} {})", name, value.display(interner))
             }
         }
     }

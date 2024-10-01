@@ -47,10 +47,10 @@ pub enum RunMode {
 
 pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     let mut interpreter = Interpreter::new();
-    let str_arena = interpreter.arena();
+    let interner = interpreter.interner();
 
     // lexing
-    let lexer = Lexer::new(program, str_arena);
+    let lexer = Lexer::new(program, interner);
     let ScanResult {
         lines,
         tokens,
@@ -72,7 +72,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
 
     if mode == RunMode::DumpLex {
         for tok in tokens.iter() {
-            println!("{}", tok.display(str_arena));
+            println!("{}", tok.display(interner));
         }
         return Ok(());
     }
@@ -95,7 +95,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
 
     if mode == RunMode::DumpParse {
         for stmt in program.statements.iter() {
-            println!("{}", stmt.display(str_arena));
+            println!("{}", stmt.display(interner));
         }
         return Ok(());
     }

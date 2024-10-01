@@ -3,8 +3,8 @@
 use std::ops::Deref;
 
 use indoc::indoc;
-use lasso::Rodeo;
 
+use crate::interp::interner::Interner;
 use crate::lex::Lexer;
 use crate::parse::Parser;
 use crate::util::{Location, TokLoc};
@@ -98,20 +98,20 @@ fn get_reference_ast() -> Expr {
 #[test]
 fn print_expr_tree() {
     let expr = get_reference_ast();
-    let arena = Rodeo::default();
+    let interner = Interner::new();
 
-    // the tokens inside the AST should not need arena here, so a default one suffice
+    // the tokens inside the AST should not need interner here, so an empty one suffice
 
-    println!("{}", expr.display(&arena));
+    println!("{}", expr.display(&interner));
 
     let result = "(== (< (* 1 (group (- 2 3))) 4) false)";
-    assert_eq!(result, format!("{}", expr.display(&arena)))
+    assert_eq!(result, format!("{}", expr.display(&interner)))
 }
 
 #[test]
 fn parse_to_a_correct_ast() {
-    let mut arena = Rodeo::default();
-    let lexer = Lexer::new(EXPRESSION, &mut arena);
+    let mut interner = Interner::new();
+    let lexer = Lexer::new(EXPRESSION, &mut interner);
     let result = lexer.scan();
 
     assert!(result.errors.is_empty());

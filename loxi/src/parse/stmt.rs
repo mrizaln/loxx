@@ -1,7 +1,6 @@
 use std::fmt::{Debug, Display};
 
-use lasso::{Rodeo, Spur};
-
+use crate::interp::interner::{Interner, Key};
 use crate::interp::{function::Function, value::Value};
 use crate::util::Location;
 
@@ -18,7 +17,7 @@ pub enum Stmt {
     },
     Var {
         loc: Location,
-        name: Spur,
+        name: Key,
         init: Option<Box<Expr>>,
     },
     Block {
@@ -44,11 +43,11 @@ pub enum Stmt {
     },
 }
 
-/// A wrapper for `Stmt` that can be displayed. This is necessary to "pass" arena as addtional
+/// A wrapper for `Stmt` that can be displayed. This is necessary to "pass" interner as addtional
 /// argument to `Display::fmt` method.
 pub struct DisplayedStmt<'a, 'b> {
     stmt: &'a Stmt,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 pub enum Unwind {
@@ -57,28 +56,31 @@ pub enum Unwind {
 }
 
 impl Stmt {
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedStmt<'a, 'b> {
-        DisplayedStmt { stmt: self, arena }
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedStmt<'a, 'b> {
+        DisplayedStmt {
+            stmt: self,
+            interner,
+        }
     }
 }
 
 impl Display for DisplayedStmt<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.stmt {
-            Stmt::Expr { expr } => Display::fmt(&expr.display(arena), f),
-            Stmt::Print { expr, .. } => write!(f, "(print {})", expr.display(arena)),
+            Stmt::Expr { expr } => Display::fmt(&expr.display(interner), f),
+            Stmt::Print { expr, .. } => write!(f, "(print {})", expr.display(interner)),
             Stmt::Var { name, init, .. } => {
-                let name = arena.resolve(name);
+                let name = interner.resolve(*name);
                 match init {
-                    Some(val) => write!(f, "(var {} {})", name, val.display(arena)),
+                    Some(val) => write!(f, "(var {} {})", name, val.display(interner)),
                     None => write!(f, "(var {} nil)", name),
                 }
             }
             Stmt::Block { statements } => {
                 write!(f, "(block")?;
                 for stmt in statements {
-                    write!(f, " {}", stmt.display(arena))?;
+                    write!(f, " {}", stmt.display(interner))?;
                 }
                 write!(f, ")")
             }
@@ -88,11 +90,11 @@ impl Display for DisplayedStmt<'_, '_> {
                 otherwise,
                 ..
             } => {
-                let condition = condition.display(arena);
-                let then = then.display(arena);
+                let condition = condition.display(interner);
+                let then = then.display(interner);
                 match otherwise {
                     Some(other) => {
-                        let other = other.display(arena);
+                        let other = other.display(interner);
                         write!(f, "(if-else {condition} {then} {other})")
                     }
                     None => {
@@ -103,34 +105,25 @@ impl Display for DisplayedStmt<'_, '_> {
             Stmt::While {
                 condition, body, ..
             } => {
-                let condition = condition.display(arena);
-                let body = body.display(arena);
+                let condition = condition.display(interner);
+                let body = body.display(interner);
                 write!(f, "(while {condition} {body})")
             }
             Stmt::Function { func } => {
                 write!(f, "(fun (")?;
                 for param in &func.params {
-                    write!(f, " {}", arena.resolve(param))?;
+                    write!(f, " {}", interner.resolve(*param))?;
                 }
                 write!(f, ")")?;
                 for stmt in &func.body {
-                    write!(f, " {}", stmt.display(arena))?;
+                    write!(f, " {}", stmt.display(interner))?;
                 }
                 write!(f, ")")
             }
             Stmt::Return { value, .. } => match value {
-                Some(val) => write!(f, "(return {})", val.display(arena)),
+                Some(val) => write!(f, "(return {})", val.display(interner)),
                 None => write!(f, "(return nil)"),
             },
-        }
-    }
-}
-
-impl Unwind {
-    pub fn expect_none(self) {
-        match self {
-            Unwind::None => {}
-            _ => panic!("expected no value"),
         }
     }
 }

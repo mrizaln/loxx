@@ -1,12 +1,9 @@
 use std::rc::Rc;
 use std::{fmt::Display, ops::Deref};
 
-use lasso::{Rodeo, Spur};
-
-use super::{
-    function::{Function, NativeFunction},
-    object::Object,
-};
+use super::function::{Function, NativeFunction};
+use super::interner::{Interner, Key};
+use super::object::Object;
 
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum Value {
@@ -23,14 +20,14 @@ pub enum Value {
     ///
     /// NOTE: There is no distinction between `String` and string literal in Lox, this is just an
     ///       optimization.
-    StringLiteral(Spur),
+    StringLiteral(Key),
 }
 
-/// A wrapper for `Value` that can be displayed. This is necessary to "pass" arena as addtional
+/// A wrapper for `Value` that can be displayed. This is necessary to "pass" interner as addtional
 /// argument to `Display::fmt` method.
 pub struct DisplayedValue<'a, 'b> {
     value: &'a Value,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 impl Value {
@@ -62,8 +59,8 @@ impl Value {
         Value::NativeFunction(Rc::new(func))
     }
 
-    pub fn string_literal(spur: Spur) -> Self {
-        Value::StringLiteral(spur)
+    pub fn string_literal(key: Key) -> Self {
+        Value::StringLiteral(key)
     }
 
     /// follows Ruby's simple rule: `false` and `nil` are falsy, everything else truthy
@@ -86,7 +83,7 @@ impl Value {
         }
     }
 
-    pub fn add(self, other: Self, arena: &Rodeo) -> Option<Value> {
+    pub fn add(self, other: Self, interner: &Interner) -> Option<Value> {
         match (self, other) {
             (Value::Number(num1), Value::Number(num2)) => Some(Value::number(num1 + num2)),
             (Value::String(str1), Value::String(str2)) => {
@@ -96,20 +93,20 @@ impl Value {
             }
             (Value::String(str1), Value::StringLiteral(str2)) => {
                 let mut new_str = str1.deref().clone();
-                let str2 = arena.resolve(&str2);
+                let str2 = interner.resolve(str2);
                 new_str.push_str(str2);
                 Some(Value::string(new_str))
             }
             (Value::StringLiteral(str1), Value::String(str2)) => {
                 let mut new_str = str2.deref().clone();
-                let str1 = arena.resolve(&str1);
+                let str1 = interner.resolve(str1);
                 new_str.insert_str(0, str1);
                 Some(Value::string(new_str))
             }
             (Value::StringLiteral(str1), Value::StringLiteral(str2)) => {
                 let mut new_str = String::new();
-                let str1 = arena.resolve(&str1);
-                let str2 = arena.resolve(&str2);
+                let str1 = interner.resolve(str1);
+                let str2 = interner.resolve(str2);
                 new_str.push_str(str1);
                 new_str.push_str(str2);
                 Some(Value::string(new_str))
@@ -139,7 +136,7 @@ impl Value {
         }
     }
 
-    pub fn eq(&self, other: &Self, arena: &Rodeo) -> Option<Value> {
+    pub fn eq(&self, other: &Self, interner: &Interner) -> Option<Value> {
         match (self, other) {
             (Value::Nil, Value::Nil) => Some(Value::bool(true)),
             (Value::Bool(b1), Value::Bool(b2)) => Some(Value::bool(b1 == b2)),
@@ -147,10 +144,10 @@ impl Value {
             (Value::String(str1), Value::String(str2)) => Some(Value::bool(str1 == str2)),
             (Value::Object(_), Value::Object(_)) => unimplemented!(),
             (Value::String(str1), Value::StringLiteral(str2)) => {
-                Some(Value::bool(str1.as_str() == arena.resolve(str2)))
+                Some(Value::bool(str1.as_str() == interner.resolve(*str2)))
             }
             (Value::StringLiteral(str1), Value::String(str2)) => {
-                Some(Value::bool(arena.resolve(str1) == str2.as_str()))
+                Some(Value::bool(interner.resolve(*str1) == str2.as_str()))
             }
             (Value::StringLiteral(str1), Value::StringLiteral(str2)) => {
                 Some(Value::bool(str1 == str2))
@@ -159,8 +156,8 @@ impl Value {
         }
     }
 
-    pub fn neq(&self, other: &Self, arena: &Rodeo) -> Option<Value> {
-        self.eq(other, arena)?.not()
+    pub fn neq(&self, other: &Self, interner: &Interner) -> Option<Value> {
+        self.eq(other, interner)?.not()
     }
 
     pub fn gt(&self, other: &Self) -> Option<Value> {
@@ -204,14 +201,17 @@ impl Value {
         }
     }
 
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedValue<'a, 'b> {
-        DisplayedValue { value: self, arena }
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedValue<'a, 'b> {
+        DisplayedValue {
+            value: self,
+            interner: interner,
+        }
     }
 }
 
 impl Display for DisplayedValue<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.value {
             Value::Nil => write!(f, "nil"),
             Value::Bool(b) => write!(f, "{b}"),
@@ -219,15 +219,15 @@ impl Display for DisplayedValue<'_, '_> {
             Value::String(str) => write!(f, "{}", str.as_str()),
             Value::Object(_) => write!(f, "<object>"),
             Value::Function(func) => {
-                let name = arena.resolve(&func.name);
+                let name = interner.resolve(func.name);
                 write!(f, "<fun {name}>")
             }
             Value::NativeFunction(func) => {
-                let name = arena.resolve(&func.name);
+                let name = interner.resolve(func.name);
                 write!(f, "<native_fun {name}>")
             }
-            Value::StringLiteral(spur) => {
-                let name = arena.resolve(spur);
+            Value::StringLiteral(key) => {
+                let name = interner.resolve(*key);
                 write!(f, "{}", name)
             }
         }
@@ -244,7 +244,7 @@ impl Clone for Value {
             Value::NativeFunction(fun) => Value::NativeFunction(Rc::clone(fun)),
             Value::String(str) => Value::String(Rc::clone(str)),
             Value::Object(obj) => Value::Object(Rc::clone(obj)),
-            Value::StringLiteral(spur) => Value::StringLiteral(*spur),
+            Value::StringLiteral(key) => Value::StringLiteral(*key),
         }
     }
 }

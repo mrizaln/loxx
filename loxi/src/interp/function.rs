@@ -1,11 +1,11 @@
 use std::fmt::Debug;
 
-use lasso::Spur;
 use thiserror::Error;
 
 use crate::parse::stmt::{Stmt, Unwind};
 use crate::util::Location;
 
+use super::interner::Key;
 use super::RuntimeError;
 use super::{env::Env, value::Value};
 
@@ -19,8 +19,8 @@ pub trait Callable {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Function {
-    pub name: Spur,
-    pub params: Box<[Spur]>,
+    pub name: Key,
+    pub params: Box<[Key]>,
     pub body: Box<[Stmt]>,
     pub loc: Location,
 }
@@ -44,7 +44,7 @@ impl FunctionError {
 }
 
 impl Function {
-    pub fn new(name: Spur, params: Box<[Spur]>, body: Box<[Stmt]>, loc: Location) -> Self {
+    pub fn new(name: Key, params: Box<[Key]>, body: Box<[Stmt]>, loc: Location) -> Self {
         Self {
             name,
             params,
@@ -92,13 +92,13 @@ type NativeFn = fn(args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError>
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct NativeFunction {
-    pub name: Spur,
-    pub params: Box<[Spur]>,
+    pub name: Key,
+    pub params: Box<[Key]>,
     pub body: NativeFn,
 }
 
 impl NativeFunction {
-    pub fn new(name: Spur, params: Box<[Spur]>, body: NativeFn) -> Self {
+    pub fn new(name: Key, params: Box<[Key]>, body: NativeFn) -> Self {
         Self { name, params, body }
     }
 }

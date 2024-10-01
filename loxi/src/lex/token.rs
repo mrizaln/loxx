@@ -1,7 +1,6 @@
 use std::fmt::Display;
 
-use lasso::{Rodeo, Spur};
-
+use crate::interp::interner::{Interner, Key};
 use crate::util::Token;
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -53,21 +52,21 @@ pub enum Keyword {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
-    String(Spur),
-    Identifier(Spur),
+    String(Key),
+    Identifier(Key),
     Number(f64),
 }
 
 pub struct DisplayedLiteral<'a, 'b> {
     literal: &'a Literal,
-    arena: &'b Rodeo,
+    interner: &'b Interner,
 }
 
 impl Literal {
-    pub fn display<'a, 'b>(&'a self, arena: &'b Rodeo) -> DisplayedLiteral<'a, 'b> {
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedLiteral<'a, 'b> {
         DisplayedLiteral {
             literal: self,
-            arena,
+            interner,
         }
     }
 }
@@ -209,10 +208,10 @@ impl TryFrom<&str> for Keyword {
 
 impl Display for DisplayedLiteral<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let arena = self.arena;
+        let interner = self.interner;
         match self.literal {
-            Literal::String(spur) => write!(f, "{}", arena.resolve(spur)),
-            Literal::Identifier(spur) => write!(f, "{}", arena.resolve(spur)),
+            Literal::String(key) => write!(f, "{}", interner.resolve(*key)),
+            Literal::Identifier(key) => write!(f, "{}", interner.resolve(*key)),
             Literal::Number(num) => write!(f, "{num}"),
         }
     }

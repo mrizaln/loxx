@@ -1,6 +1,5 @@
 use std::cell::RefMut;
 
-use lasso::Rodeo;
 use thiserror::Error;
 
 use crate::parse::expr::{Expr, RefExpr, ValExpr};
@@ -10,10 +9,12 @@ use crate::util::{Location, TokLoc};
 use self::env::Env;
 use self::function::Callable;
 use self::function::NativeFunction;
+use self::interner::Interner;
 use self::value::Value;
 
 pub mod env;
 pub mod function;
+pub mod interner;
 pub mod object;
 pub mod value;
 
@@ -54,21 +55,21 @@ impl RuntimeError {
 
 pub struct Interpreter {
     environment: Env,
-    str_arena: Rodeo,
+    interner: Interner,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         let mut interp = Interpreter {
             environment: Env::new(),
-            str_arena: Rodeo::new(),
+            interner: Interner::new(),
         };
         interp.populate_env();
         interp
     }
 
-    pub fn arena(&mut self) -> &mut Rodeo {
-        &mut self.str_arena
+    pub fn interner(&mut self) -> &mut Interner {
+        &mut self.interner
     }
 
     pub fn interpret(&mut self, program: Program) -> Result<(), RuntimeError> {
@@ -84,7 +85,7 @@ impl Interpreter {
     }
 
     fn populate_env(&mut self) {
-        let name = self.str_arena.get_or_intern("clock");
+        let name = self.interner.get_or_intern("clock");
         let clock = NativeFunction::new(name, Box::new([]), native_functions::clock);
         self.environment.define(name, Value::native_function(clock));
     }
@@ -96,7 +97,7 @@ impl Interpreter {
                 Ok(Unwind::None)
             }
             Stmt::Print { expr, .. } => {
-                self.eval_fn(expr, |v| println!("{}", v.display(&self.str_arena)))?;
+                self.eval_fn(expr, |v| println!("{}", v.display(&self.interner)))?;
                 Ok(Unwind::None)
             }
             Stmt::Var { name, init, .. } => {
@@ -237,12 +238,12 @@ impl Interpreter {
                 let rhs = self.eval_cloned(right)?;
 
                 match operator.tok {
-                    token::BinaryOp::Add => lhs.add(rhs, &self.str_arena),
+                    token::BinaryOp::Add => lhs.add(rhs, &self.interner),
                     token::BinaryOp::Sub => lhs.sub(rhs),
                     token::BinaryOp::Mul => lhs.mul(rhs),
                     token::BinaryOp::Div => lhs.div(rhs),
-                    token::BinaryOp::Equal => lhs.eq(&rhs, &self.str_arena),
-                    token::BinaryOp::NotEqual => lhs.neq(&rhs, &self.str_arena),
+                    token::BinaryOp::Equal => lhs.eq(&rhs, &self.interner),
+                    token::BinaryOp::NotEqual => lhs.neq(&rhs, &self.interner),
                     token::BinaryOp::Less => lhs.lt(&rhs),
                     token::BinaryOp::LessEq => lhs.le(&rhs),
                     token::BinaryOp::Greater => lhs.gt(&rhs),
@@ -294,7 +295,7 @@ impl Interpreter {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
             } => self.environment.get(tok.name).ok_or_else(|| {
-                let var_name = self.str_arena.resolve(&tok.name);
+                let var_name = self.interner.resolve(tok.name);
                 RuntimeError::UndefinedVariable(*loc, var_name.to_string())
             }),
             RefExpr::Grouping { expr } => self.eval_ref(expr),
@@ -303,7 +304,7 @@ impl Interpreter {
                 self.environment
                     .get(var.tok.name)
                     .ok_or_else(|| {
-                        let var_name = self.str_arena.resolve(&var.tok.name);
+                        let var_name = self.interner.resolve(var.tok.name);
                         RuntimeError::UndefinedVariable(var.loc, var_name.to_string())
                     })
                     .map(|mut v| {

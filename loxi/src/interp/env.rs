@@ -1,14 +1,14 @@
 use core::panic;
 use std::cell::{RefCell, RefMut};
 
-use lasso::Spur;
 use rustc_hash::FxHashMap;
 
+use super::interner::Key;
 use super::value::Value;
 
 #[derive(Debug)]
 pub struct Env {
-    stack: RefCell<Vec<FxHashMap<Spur, Value>>>,
+    stack: RefCell<Vec<FxHashMap<Key, Value>>>,
 }
 
 #[must_use = "EnvGuard lifetime defines the lifetime of the scope, it will immediately drop if not used"]
@@ -40,12 +40,12 @@ impl Env {
         }
     }
 
-    pub fn define(&self, key: Spur, value: Value) {
+    pub fn define(&self, key: Key, value: Value) {
         let mut map = self.get_map(self.index());
         map.insert(key, value);
     }
 
-    pub fn get_at(&self, key: Spur, index: usize) -> Option<RefMut<'_, Value>> {
+    pub fn get_at(&self, key: Key, index: usize) -> Option<RefMut<'_, Value>> {
         if index >= self.len() {
             panic!(
                 "index exceed the len of vec (index: {}, size: {})",
@@ -57,7 +57,7 @@ impl Env {
         RefMut::filter_map(map, |m| m.get_mut(&key)).ok()
     }
 
-    pub fn get(&self, key: Spur) -> Option<RefMut<'_, Value>> {
+    pub fn get(&self, key: Key) -> Option<RefMut<'_, Value>> {
         for i in (0..=self.index()).rev() {
             if let Some(value) = self.get_at(key, i) {
                 return Some(value);
@@ -66,7 +66,7 @@ impl Env {
         None
     }
 
-    fn get_map(&self, index: usize) -> RefMut<'_, FxHashMap<Spur, Value>> {
+    fn get_map(&self, index: usize) -> RefMut<'_, FxHashMap<Key, Value>> {
         let stack = self.stack.borrow_mut();
         RefMut::map(stack, |stack| {
             stack.get_mut(index).unwrap_or_else(|| {
