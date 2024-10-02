@@ -56,6 +56,10 @@ pub enum Unwind {
 }
 
 impl Stmt {
+    pub fn boxed(self) -> Box<Self> {
+        Box::new(self)
+    }
+
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedStmt<'a, 'b> {
         DisplayedStmt {
             stmt: self,

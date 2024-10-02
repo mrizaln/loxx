@@ -1,4 +1,3 @@
-use core::panic;
 use std::cell::{RefCell, RefMut};
 
 use rustc_hash::FxHashMap;
@@ -18,7 +17,7 @@ pub struct EnvGuard<'a> {
 }
 
 impl Env {
-    pub fn new() -> Self {
+    pub fn new_with_global() -> Self {
         Self {
             stack: RefCell::new(vec![FxHashMap::default()]),
         }

@@ -1,23 +1,23 @@
 use std::collections::VecDeque;
+use std::fmt::Display;
 use thiserror::Error;
 
 use crate::interp::function::UserDefined;
-use crate::interp::interner::Key;
+use crate::interp::interner::{Interner, Key};
 use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
 
-use expr::{
-    macros::{group_expr, ref_expr, val_expr},
-    Expr, RefExpr, ValExpr,
-};
+use expr::{Expr, RefExpr};
 use stmt::Stmt;
 
 use macros::{is_tok, missing_delim, peek_no_eof, syntax_error};
 
 pub mod expr;
 pub mod stmt;
-mod test;
 pub mod token;
+
+#[cfg(test)]
+mod test;
 
 // Lox Grammar (unfinished)
 //  ------------------------
@@ -167,6 +167,11 @@ pub struct Parser {
 
 pub struct Program {
     pub statements: Vec<Stmt>,
+}
+
+pub struct DisplayedProgram<'a, 'b> {
+    program: &'a Program,
+    interner: &'b Interner,
 }
 
 pub type ExprResult = Result<Box<Expr>, ParseError>;
@@ -380,7 +385,7 @@ impl Parser {
         Ok(Stmt::While {
             loc,
             condition,
-            body: Box::new(body),
+            body: body.boxed(),
         })
     }
 
@@ -418,12 +423,7 @@ impl Parser {
 
         let condition = match condition {
             Some(expr) => expr,
-            None => Box::new(val_expr!(Literal {
-                value: TokLoc {
-                    tok: token::Literal::True,
-                    loc
-                }
-            })),
+            None => Expr::literal(TokLoc::new(token::Literal::True, loc)).boxed(),
         };
 
         let body = match increment {
@@ -436,7 +436,7 @@ impl Parser {
         let while_stmt = Stmt::While {
             loc,
             condition,
-            body: Box::new(body),
+            body: body.boxed(),
         };
 
         match init {
@@ -510,8 +510,8 @@ impl Parser {
         Ok(Stmt::If {
             loc,
             condition,
-            then: Box::new(then),
-            otherwise: otherwise.map(Box::new),
+            then: then.boxed(),
+            otherwise: otherwise.map(Stmt::boxed),
         })
     }
 
@@ -528,14 +528,12 @@ impl Parser {
                 let value = self.assignment()?;
 
                 match *expr {
-                    Expr::RefExpr(lvalue) => match lvalue {
-                        RefExpr::Variable { var } => {
-                            Ok(Box::new(ref_expr!(Assignment { var, value })))
-                        }
+                    Expr::RefExpr(lvalue, _) => match lvalue {
+                        RefExpr::Variable { var } => Ok(Expr::assignment(var, value).boxed()),
                         RefExpr::Assignment { .. } => unreachable!(),
                         RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
                     },
-                    Expr::ValExpr(_) => Err(syntax_error!("<lvalue>", "<rvalue>", loc)),
+                    Expr::ValExpr(_, _) => Err(syntax_error!("<lvalue>", "<rvalue>", loc)),
                 }
             }
             _ => Ok(expr),
@@ -575,10 +573,7 @@ impl Parser {
     fn unary(&mut self) -> ExprResult {
         if let Some(op) = conv::to_unary(self.peek()?) {
             self.advance();
-            Ok(Box::new(val_expr!(Unary {
-                operator: op,
-                right: self.unary()?,
-            })))
+            Ok(Expr::unary(op, self.unary()?).boxed())
         } else {
             self.call()
         }
@@ -605,11 +600,7 @@ impl Parser {
         // zero argument
         if let is_tok!(Punctuation::ParenRight) = self.peek()? {
             self.advance();
-            return Ok(Box::new(val_expr!(Call {
-                callee,
-                args: Box::new([]),
-                loc,
-            })));
+            return Ok(Expr::call(callee, Box::new([]), loc).boxed());
         }
 
         // one or more arguments
@@ -631,11 +622,7 @@ impl Parser {
         if arguments.len() > Expr::MAX_FUNC_ARGS {
             Err(ParseError::too_many_args(arguments.len(), loc))
         } else {
-            Ok(Box::new(val_expr!(Call {
-                callee,
-                args: arguments.into_boxed_slice(),
-                loc,
-            })))
+            Ok(Expr::call(callee, arguments.into_boxed_slice(), loc).boxed())
         }
     }
 
@@ -643,9 +630,8 @@ impl Parser {
         let curr = self.advance().expect("Unexpected end of file");
         let loc = curr.loc();
 
-        let lit = |lit| val_expr! { Literal { value: TokLoc { tok: lit, loc } } };
-        let var =
-            |name| ref_expr! { Variable { var: TokLoc { tok: token::Variable { name }, loc } } };
+        let lit = |lit| Expr::literal(TokLoc::new(lit, loc));
+        let var = |name| Expr::variable(TokLoc::new(token::Variable { name }, loc));
 
         type Lit = token::Literal;
 
@@ -664,14 +650,17 @@ impl Parser {
                     is_tok!(Punctuation::ParenRight) => self.advance(),
                     _ => Err(missing_delim!(")", loc))?,
                 };
-                group_expr!(*expr)
+                match *expr {
+                    Expr::ValExpr(expr, _) => Expr::group_val(Box::new(expr), loc),
+                    Expr::RefExpr(expr, _) => Expr::group_ref(Box::new(expr), loc),
+                }
             }
 
             lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
             _ => return Err(syntax_error!("<expression>", curr.static_str(), loc)),
         };
 
-        Ok(Box::new(expr))
+        Ok(expr.boxed())
     }
 
     fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
@@ -680,16 +669,11 @@ impl Parser {
         F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
-
         while let Some(op) = curr(self.peek()?) {
             self.advance();
-            expr = Box::new(val_expr!(Binary {
-                left: expr,
-                operator: op,
-                right: inner(self).map_err(|e| e.syntax_err("<expression>"))?,
-            }));
+            let right = inner(self).map_err(|e| e.syntax_err("<expression>"))?;
+            expr = Expr::binary(expr, op, right).boxed();
         }
-
         Ok(expr)
     }
 
@@ -699,16 +683,11 @@ impl Parser {
         F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
-
         while let Some(kind) = curr(self.peek()?) {
             self.advance();
-            expr = Box::new(val_expr!(Logical {
-                left: expr,
-                kind,
-                right: inner(self).map_err(|e| e.syntax_err("<expression>"))?,
-            }));
+            let right = inner(self).map_err(|e| e.syntax_err("<expression>"))?;
+            expr = Expr::logical(expr, kind, right).boxed();
         }
-
         Ok(expr)
     }
 
@@ -810,6 +789,21 @@ mod conv {
             }),
             false => None,
         }
+    }
+}
+
+impl Program {
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedProgram<'a, 'b> {
+        DisplayedProgram { program: self, interner }
+    }
+}
+
+impl Display for DisplayedProgram<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for stmt in &self.program.statements {
+            writeln!(f, "{}", stmt.display(self.interner))?;
+        }
+        Ok(())
     }
 }
 

@@ -14,6 +14,13 @@ pub struct Location {
     pub line: usize,
     pub column: usize,
 }
+
+impl<T: Token> TokLoc<T> {
+    pub fn new(tok: T, loc: Location) -> Self {
+        Self { tok, loc }
+    }
+}
+
 impl Location {
     pub(crate) fn new(line: usize, column: usize) -> Self {
         Self { line, column }

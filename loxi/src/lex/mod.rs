@@ -9,8 +9,10 @@ use crate::interp::interner::{Interner, Key};
 use crate::util::{self, Location, TokLoc};
 use macros::tok;
 
-mod test;
 pub mod token;
+
+#[cfg(test)]
+mod test;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Token {

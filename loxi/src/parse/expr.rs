@@ -1,13 +1,22 @@
 use std::fmt::Display;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::token;
 use crate::interp::interner::Interner;
 use crate::util::{Location, TokLoc};
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+use macros::*;
+
+#[derive(Debug, Clone)]
 pub enum Expr {
-    ValExpr(ValExpr),
-    RefExpr(RefExpr),
+    ValExpr(ValExpr, ExprId),
+    RefExpr(RefExpr, ExprId),
+}
+
+/// ExprId is used to identify an expression, it's ignored in comparison and ordering.
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Hash)]
+pub struct ExprId {
+    id: usize,
 }
 
 /// Expression that produces `Value`
@@ -27,6 +36,7 @@ pub enum ValExpr {
     },
     Grouping {
         expr: Box<ValExpr>,
+        loc: Location,
     },
     Logical {
         left: Box<Expr>,
@@ -48,6 +58,7 @@ pub enum RefExpr {
     },
     Grouping {
         expr: Box<RefExpr>,
+        loc: Location,
     },
     Assignment {
         var: TokLoc<token::Variable>,
@@ -75,10 +86,90 @@ impl Expr {
     /// is in Java and it's limited there to 255 arguments only.
     pub const MAX_FUNC_ARGS: usize = 255;
 
+    pub fn boxed(self) -> Box<Self> {
+        Box::new(self)
+    }
+
+    pub fn id(&self) -> ExprId {
+        match self {
+            Expr::ValExpr(_, id) => *id,
+            Expr::RefExpr(_, id) => *id,
+        }
+    }
+
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedExpr<'a, 'b> {
         DisplayedExpr {
             expr: self,
             interner,
+        }
+    }
+
+    pub fn literal(value: TokLoc<token::Literal>) -> Self {
+        val_expr!(Literal { value })
+    }
+
+    pub fn unary(operator: TokLoc<token::UnaryOp>, right: Box<Expr>) -> Self {
+        val_expr!(Unary { operator, right })
+    }
+
+    pub fn binary(left: Box<Expr>, operator: TokLoc<token::BinaryOp>, right: Box<Expr>) -> Self {
+        val_expr!(Binary {
+            left,
+            operator,
+            right
+        })
+    }
+
+    pub fn group_val(expr: Box<ValExpr>, loc: Location) -> Self {
+        val_expr!(Grouping { expr, loc })
+    }
+
+    pub fn logical(left: Box<Expr>, kind: TokLoc<token::LogicalOp>, right: Box<Expr>) -> Self {
+        val_expr!(Logical { left, kind, right })
+    }
+
+    pub fn call(callee: Box<Expr>, args: Box<[Expr]>, loc: Location) -> Self {
+        val_expr!(Call { callee, args, loc })
+    }
+
+    pub fn variable(var: TokLoc<token::Variable>) -> Self {
+        ref_expr!(Variable { var })
+    }
+
+    pub fn group_ref(expr: Box<RefExpr>, loc: Location) -> Self {
+        ref_expr!(Grouping { expr, loc })
+    }
+
+    pub fn assignment(var: TokLoc<token::Variable>, value: Box<Expr>) -> Self {
+        ref_expr!(Assignment { var, value })
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Expr::ValExpr(lhs, _), Expr::ValExpr(rhs, _)) => lhs == rhs,
+            (Expr::RefExpr(lhs, _), Expr::RefExpr(rhs, _)) => lhs == rhs,
+            _ => false,
+        }
+    }
+}
+
+impl PartialOrd for Expr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Expr::ValExpr(lhs, _), Expr::ValExpr(rhs, _)) => lhs.partial_cmp(rhs),
+            (Expr::RefExpr(lhs, _), Expr::RefExpr(rhs, _)) => lhs.partial_cmp(rhs),
+            _ => None,
+        }
+    }
+}
+
+impl ExprId {
+    pub fn new() -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(1);
+        Self {
+            id: COUNTER.fetch_add(1, Ordering::Relaxed),
         }
     }
 }
@@ -105,8 +196,8 @@ impl Display for DisplayedExpr<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let interner = self.interner;
         match self.expr {
-            Expr::ValExpr(expr) => write!(f, "{}", expr.display(interner)),
-            Expr::RefExpr(expr) => write!(f, "{}", expr.display(interner)),
+            Expr::ValExpr(expr, _) => write!(f, "{}", expr.display(interner)),
+            Expr::RefExpr(expr, _) => write!(f, "{}", expr.display(interner)),
         }
     }
 }
@@ -135,7 +226,7 @@ impl Display for DisplayedValExpr<'_, '_> {
                     right.display(interner)
                 )
             }
-            ValExpr::Grouping { expr } => {
+            ValExpr::Grouping { expr, .. } => {
                 write!(f, "(group {})", expr.display(interner))
             }
             ValExpr::Logical { left, kind, right } => {
@@ -164,7 +255,7 @@ impl Display for DisplayedRefExpr<'_, '_> {
         let interner = self.interner;
         match self.expr {
             RefExpr::Variable { var } => write!(f, "(var {})", interner.resolve(var.tok.name)),
-            RefExpr::Grouping { expr } => write!(f, "{}", expr.display(interner)),
+            RefExpr::Grouping { expr, .. } => write!(f, "{}", expr.display(interner)),
             RefExpr::Assignment { var, value } => {
                 let name = interner.resolve(var.tok.name);
                 write!(f, "(= {} {})", name, value.display(interner))
@@ -173,33 +264,19 @@ impl Display for DisplayedRefExpr<'_, '_> {
     }
 }
 
-pub mod macros {
+mod macros {
     macro_rules! val_expr {
         ($kind:tt $xpr:tt) => {
-            Expr::ValExpr(ValExpr::$kind $xpr)
+            Expr::ValExpr(ValExpr::$kind $xpr, ExprId::new())
         };
     }
 
     macro_rules! ref_expr {
         ($kind:tt $xpr:tt) => {
-            Expr::RefExpr(RefExpr::$kind $xpr)
+            Expr::RefExpr(RefExpr::$kind $xpr, ExprId::new())
         };
     }
 
-    macro_rules! group_expr {
-        ($xpr:expr) => {
-            match $xpr {
-                Expr::ValExpr(expr) => val_expr!(Grouping {
-                    expr: Box::new(expr)
-                }),
-                Expr::RefExpr(expr) => ref_expr!(Grouping {
-                    expr: Box::new(expr)
-                }),
-            }
-        };
-    }
-
-    pub(crate) use group_expr;
     pub(crate) use ref_expr;
     pub(crate) use val_expr;
 }
