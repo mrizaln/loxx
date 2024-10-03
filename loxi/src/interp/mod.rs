@@ -34,10 +34,6 @@ pub enum RuntimeError {
 
     #[error("{0} RuntimeError: Not a function or a callable object")]
     NotCallable(Location),
-
-    // NOTE: maybe pushing this error to parsing stage is better
-    #[error("{0} RuntimeError: Stray return statement")]
-    StrayReturn(Location),
 }
 
 impl RuntimeError {
@@ -48,7 +44,6 @@ impl RuntimeError {
             RuntimeError::UndefinedVariable(loc, _) => *loc,
             RuntimeError::FunctionError(err) => err.loc(),
             RuntimeError::NotCallable(loc) => *loc,
-            RuntimeError::StrayReturn(loc) => *loc,
         }
     }
 }
@@ -83,8 +78,8 @@ impl Interpreter {
         for stmt in program.statements.iter() {
             match self.execute(stmt)? {
                 Unwind::None => (),
-                Unwind::Return(_, loc) => {
-                    Err(RuntimeError::StrayReturn(loc))?;
+                Unwind::Return(_, _) => {
+                    panic!("stray return detection should be handled in Resolver")
                 }
             }
         }

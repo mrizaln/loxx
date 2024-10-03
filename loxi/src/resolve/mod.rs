@@ -8,19 +8,31 @@ use crate::parse::expr::{ExprId, RefExpr, ValExpr};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
 
-use self::scope::{Scope, VarBind};
+use self::scope::{Scope, ScopeError, VarBind};
 
 mod scope;
 
 pub struct Resolver {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
+    context: Context, // track if we are in a function or not, acts like a stack
+}
+
+enum Context {
+    Function,
+    None,
 }
 
 #[derive(Debug, Error)]
 pub enum ResolveError {
     #[error("{0} SyntaxError: Variable is used in its own initializer")]
     VariableInInitializer(Location),
+
+    #[error("{0} SyntaxError: Variable with the same name already defined at {1}")]
+    DuplicateDeclaration(Location, Location),
+
+    #[error("{0} SyntaxError: Stray return statement outside of function")]
+    StrayReturn(Location),
 }
 
 #[derive(Default)]
@@ -33,6 +45,7 @@ impl Resolver {
         Resolver {
             scope: Scope::new_empty(),
             resolved_expr: FxHashMap::default(),
+            context: Context::None,
         }
     }
 
@@ -52,7 +65,7 @@ impl Resolver {
             Stmt::Expr { expr } => self.resolve_expr(expr),
             Stmt::Print { expr, .. } => self.resolve_expr(expr),
             Stmt::Var { loc, name, init } => {
-                self.declare_var(*name, *loc);
+                self.declare_var(*name, *loc)?;
                 if let Some(init) = init {
                     self.resolve_expr(init)?;
                 };
@@ -92,13 +105,18 @@ impl Resolver {
                 body,
                 loc,
             } => {
-                self.declare_and_define_var(*name, *loc);
-                self.resolve_function(params, body, *loc)
+                self.declare_and_define_var(*name, *loc)?;
+                self.resolve_function(params, body, *loc, Context::Function)
             }
-            Stmt::Return { value, .. } => match value {
-                Some(value) => self.resolve_expr(value),
-                None => Ok(()),
-            },
+            Stmt::Return { value, loc } => {
+                if let Context::None = self.context {
+                    Err(ResolveError::StrayReturn(*loc))?;
+                }
+                match value {
+                    Some(value) => self.resolve_expr(value),
+                    None => Ok(()),
+                }
+            }
         }
     }
 
@@ -175,29 +193,40 @@ impl Resolver {
         params: &[Key],
         body: &[Stmt],
         loc: Location,
+        context: Context,
     ) -> Result<(), ResolveError> {
+        let mut prev_context = std::mem::replace(&mut self.context, context);
         self.scope.create_scope();
+
         for param in params.iter() {
-            self.declare_and_define_var(*param, loc);
+            self.declare_and_define_var(*param, loc)?;
         }
         for stmt in body.iter() {
             self.resolve_stmt(stmt)?;
         }
+
         self.scope.drop_scope();
+        std::mem::swap(&mut self.context, &mut prev_context);
+
         Ok(())
     }
 
-    fn declare_and_define_var(&self, name: Key, loc: Location) {
-        self.declare_var(name, loc);
+    fn declare_and_define_var(&self, name: Key, loc: Location) -> Result<(), ResolveError> {
+        self.declare_var(name, loc)?;
         self.define_var(name, loc);
+        Ok(())
     }
 
-    fn declare_var(&self, name: Key, loc: Location) {
+    fn declare_var(&self, name: Key, loc: Location) -> Result<(), ResolveError> {
         // variables declared at global scope are not resolved
         if self.scope.is_empty() {
-            return;
+            return Ok(());
         }
-        self.scope.define(name, VarBind::Decl(loc));
+        self.scope
+            .define(name, VarBind::Decl(loc))
+            .map_err(|err| match err {
+                ScopeError::DuplicateDefine(prev) => ResolveError::DuplicateDeclaration(loc, prev),
+            })
     }
 
     fn define_var(&self, name: Key, loc: Location) {
@@ -216,6 +245,8 @@ impl ResolveError {
     pub fn loc(&self) -> Location {
         match self {
             ResolveError::VariableInInitializer(loc) => *loc,
+            ResolveError::DuplicateDeclaration(loc, _) => *loc,
+            ResolveError::StrayReturn(loc) => *loc,
         }
     }
 }

@@ -11,9 +11,22 @@ pub enum VarBind {
     Def(Location),
 }
 
+pub enum ScopeError {
+    DuplicateDefine(Location),
+}
+
 #[derive(Debug)]
 pub struct Scope {
     stack: RefCell<Vec<FxHashMap<Key, VarBind>>>,
+}
+
+impl VarBind {
+    pub fn loc(&self) -> Location {
+        match self {
+            VarBind::Decl(loc) => *loc,
+            VarBind::Def(loc) => *loc,
+        }
+    }
 }
 
 impl Scope {
@@ -39,9 +52,12 @@ impl Scope {
         self.stack.borrow_mut().pop();
     }
 
-    pub fn define(&self, key: Key, value: VarBind) {
+    pub fn define(&self, key: Key, value: VarBind) -> Result<(), ScopeError> {
         let mut map = self.get_map(0);
-        map.insert(key, value);
+        match map.insert(key, value) {
+            Some(kind) => Err(ScopeError::DuplicateDefine(kind.loc())),
+            None => Ok(()),
+        }
     }
 
     pub fn get_at(&self, key: Key, distance: usize) -> Option<RefMut<'_, VarBind>> {

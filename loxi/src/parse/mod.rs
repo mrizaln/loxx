@@ -268,23 +268,32 @@ impl Parser {
             Ok(is_tok!(Punctuation::ParenRight)) => {
                 self.advance();
             }
-            Ok(is_tok!(Literal::Identifier(_, _))) => {
-                loop {
-                    match self.peek() {
-                        Err(err) => Err(err.syntax_err("<identifier>"))?,
-                        Ok(is_tok!(Literal::Identifier(name, _))) => {
-                            params.push(*name);
-                            self.advance();
-                        }
-                        Ok(is_tok!(Punctuation::Comma)) => {
-                            self.advance();
-                            continue;
-                        }
-                        Ok(_) => break,
-                    };
+            Ok(is_tok!(Literal::Identifier(_, _))) => loop {
+                match self.peek() {
+                    Ok(is_tok!(Literal::Identifier(name, _))) => {
+                        params.push(*name);
+                        self.advance();
+                    }
+                    Ok(tok) => Err(syntax_error!(
+                        "<identifier or )",
+                        tok.static_str(),
+                        tok.loc()
+                    ))?,
+                    Err(err) => Err(err.syntax_err("<identifier> or )"))?,
+                };
+                match self.peek() {
+                    Ok(is_tok!(Punctuation::ParenRight)) => {
+                        self.advance();
+                        break;
+                    }
+                    Ok(is_tok!(Punctuation::Comma)) => {
+                        self.advance();
+                        continue;
+                    }
+                    Ok(tok) => Err(syntax_error!(", or )", tok.static_str(), tok.loc()))?,
+                    Err(err) => Err(err.syntax_err(", or )"))?,
                 }
-                peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
-            }
+            },
             Ok(tok) => Err(syntax_error!(
                 "<identifier> or )",
                 tok.static_str(),
