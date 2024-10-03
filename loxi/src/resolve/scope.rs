@@ -40,19 +40,19 @@ impl Scope {
     }
 
     pub fn define(&self, key: Key, value: VarBind) {
-        let mut map = self.get_map(self.index());
+        let mut map = self.get_map(0);
         map.insert(key, value);
     }
 
-    pub fn get_at(&self, key: Key, index: usize) -> Option<RefMut<'_, VarBind>> {
-        if index >= self.len() {
+    pub fn get_at(&self, key: Key, distance: usize) -> Option<RefMut<'_, VarBind>> {
+        if distance > self.index() {
             panic!(
-                "index exceed the len of vec (index: {}, size: {})",
-                index,
+                "distance exceed the len of vec (index: {}, size: {})",
+                distance,
                 self.len()
             );
         }
-        let map = self.get_map(index);
+        let map = self.get_map(distance);
         RefMut::filter_map(map, |m| m.get_mut(&key)).ok()
     }
 
@@ -60,22 +60,21 @@ impl Scope {
         if self.is_empty() {
             panic!("accessing empty Scope")
         }
-        self.get_at(key, self.len() - 1)
+        self.get_at(key, 0)
     }
 
     // get the value of the key and the distance from the current scope
     pub fn get(&self, key: Key) -> Option<(RefMut<'_, VarBind>, usize)> {
-        for i in (0..=self.index()).rev() {
-            // distance must be calculated first since Self::get_at mutably borrows self
-            let distance = self.index() - 1;
+        for i in 0..=self.index() {
             if let Some(value) = self.get_at(key, i) {
-                return Some((value, distance));
+                return Some((value, i));
             }
         }
         None
     }
 
-    fn get_map(&self, index: usize) -> RefMut<'_, FxHashMap<Key, VarBind>> {
+    fn get_map(&self, distance: usize) -> RefMut<'_, FxHashMap<Key, VarBind>> {
+        let index = self.index() - distance;
         let stack = self.stack.borrow_mut();
         RefMut::map(stack, |stack| {
             stack.get_mut(index).unwrap_or_else(|| {

@@ -75,7 +75,6 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 use thiserror::Error;
 
-use crate::interp::function::UserDefined;
 use crate::interp::interner::{Interner, Key};
 use crate::lex::{self, token as ltok};
 use crate::util::{Location, TokLoc};
@@ -294,6 +293,10 @@ impl Parser {
             Err(err) => Err(err.syntax_err("<identifier> or )"))?,
         }
 
+        if params.len() >= Expr::MAX_FUNC_ARGS {
+            Err(ParseError::too_many_args(params.len(), loc))?;
+        }
+
         let body = peek_no_eof! { self as ["{"]
             if is_tok!(Punctuation::BraceLeft) => {
                 let loc = self.advance().unwrap().loc();
@@ -307,7 +310,10 @@ impl Parser {
         };
 
         Ok(Stmt::Function {
-            func: Box::new(UserDefined::new(name, params.into_boxed_slice(), body, loc)),
+            name,
+            params: params.into_boxed_slice(),
+            body,
+            loc,
         })
     }
 
@@ -619,7 +625,7 @@ impl Parser {
         peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
 
         // NOTE: in the lox book, this arguments number check is done using >= instead of >
-        if arguments.len() > Expr::MAX_FUNC_ARGS {
+        if arguments.len() >= Expr::MAX_FUNC_ARGS {
             Err(ParseError::too_many_args(arguments.len(), loc))
         } else {
             Ok(Expr::call(callee, arguments.into_boxed_slice(), loc).boxed())

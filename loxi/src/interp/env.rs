@@ -1,4 +1,5 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
@@ -7,127 +8,155 @@ use super::value::Value;
 
 #[derive(Debug)]
 pub struct Env {
-    stack: RefCell<Vec<FxHashMap<Key, Value>>>,
+    pub values: RefCell<FxHashMap<Key, Value>>,
+    pub parent: Option<Rc<Env>>,
 }
 
-#[must_use = "EnvGuard lifetime defines the lifetime of the scope, it will immediately drop if not used"]
+#[derive(Debug)]
+pub struct DynamicEnv {
+    global: Rc<Env>,
+    current: RefCell<Rc<Env>>,
+}
+
+#[must_use]
 pub struct EnvGuard<'a> {
-    stack: &'a Env,
-    index: usize,
+    env: &'a DynamicEnv,
+}
+
+#[must_use]
+pub struct EnvBindGuard<'a> {
+    env: &'a DynamicEnv,
+    previous: Rc<Env>,
 }
 
 impl Env {
-    pub fn new_with_global() -> Self {
+    pub fn new() -> Self {
         Self {
-            stack: RefCell::new(vec![FxHashMap::default()]),
+            values: RefCell::new(FxHashMap::default()),
+            parent: None,
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.stack.borrow().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn create_scope(&self) -> EnvGuard<'_> {
-        self.stack.borrow_mut().push(FxHashMap::default());
-        EnvGuard {
-            stack: self,
-            index: self.len() - 1,
+    pub fn new_with_parent(parent: Rc<Env>) -> Self {
+        Self {
+            values: RefCell::new(FxHashMap::default()),
+            parent: Some(parent),
         }
     }
 
     pub fn define(&self, key: Key, value: Value) {
-        let mut map = self.get_map(self.index());
-        map.insert(key, value);
-    }
-
-    pub fn distance(&self, key: Key) -> Option<usize> {
-        let index = self.index();
-        for i in (0..=index).rev() {
-            if self.get_map(i).contains_key(&key) {
-                return Some(index);
-            }
-        }
-        None
-    }
-
-    pub fn get_at(&self, key: Key, distance: usize) -> Option<Value> {
-        self.validate(distance);
-        let map = self.get_map(self.index() - distance);
-        map.get(&key).cloned()
+        self.values.borrow_mut().insert(key, value);
     }
 
     pub fn get(&self, key: Key) -> Option<Value> {
-        for i in (0..=self.index()).rev() {
-            if let Some(value) = self.get_map(i).get(&key) {
-                return Some(value.clone());
-            }
+        match self.values.borrow().get(&key) {
+            Some(value) => Some(value.clone()),
+            _ => match &self.parent {
+                Some(parent) => parent.get(key),
+                _ => None,
+            },
         }
-        None
-    }
-
-    pub fn modify_at<F, R>(&self, key: Key, distance: usize, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut Value) -> R,
-    {
-        self.validate(distance);
-        let mut map = self.get_map(self.index() - distance);
-        map.get_mut(&key).map(f)
     }
 
     pub fn modify<F, R>(&self, key: Key, f: F) -> Option<R>
     where
         F: FnOnce(&mut Value) -> R,
     {
-        for i in (0..=self.index()).rev() {
-            if let Some(value) = self.get_map(i).get_mut(&key) {
-                return Some(f(value));
-            }
+        match self.values.borrow_mut().get_mut(&key) {
+            Some(value) => Some(f(value)),
+            _ => match &self.parent {
+                Some(parent) => parent.modify(key, f),
+                _ => None,
+            },
         }
-        None
     }
+}
 
-    fn get_map(&self, index: usize) -> RefMut<'_, FxHashMap<Key, Value>> {
-        let len = self.len();
-        let stack = self.stack.borrow_mut();
-        RefMut::map(stack, |stack| {
-            stack.get_mut(index).unwrap_or_else(|| {
-                panic!(
-                    "iter should point to a valid stack frame (index: {}, len: {})",
-                    index, len
-                )
-            })
-        })
-    }
-
-    fn index(&self) -> usize {
-        self.len() - 1
-    }
-
-    fn validate(&self, distance: usize) {
-        if distance >= self.len() {
-            panic!(
-                "index exceed the len of vec (index: {}, size: {})",
-                distance,
-                self.len()
-            );
+impl DynamicEnv {
+    pub fn new_with_global() -> Self {
+        let env = Rc::new(Env::new());
+        Self {
+            current: Rc::clone(&env).into(),
+            global: env,
         }
+    }
+
+    pub fn current(&self) -> Rc<Env> {
+        Rc::clone(&self.current.borrow())
+    }
+
+    pub fn create_scope(&self) -> EnvGuard<'_> {
+        let parent = Rc::clone(&self.current.borrow());
+        let env = Rc::new(Env::new_with_parent(parent));
+        *self.current.borrow_mut() = env;
+        EnvGuard { env: self }
+    }
+
+    fn destroy_scope(&self) {
+        let parent = Rc::clone(self.current.borrow().parent.as_ref().unwrap());
+        *self.current.borrow_mut() = parent;
+    }
+
+    pub fn bind_scope(&self, env: Rc<Env>) -> EnvBindGuard<'_> {
+        let previous = std::mem::replace(
+            &mut *self.current.borrow_mut(),
+            Rc::new(Env::new_with_parent(env)),
+        );
+        EnvBindGuard {
+            env: self,
+            previous,
+        }
+    }
+
+    fn rebind_scope(&self, env: Rc<Env>) {
+        *self.current.borrow_mut() = env;
+    }
+
+    pub fn define(&self, key: Key, value: Value) {
+        self.current.borrow_mut().define(key, value);
+    }
+
+    pub fn get_global(&self, key: Key) -> Option<Value> {
+        self.global.get(key)
+    }
+
+    pub fn get_at(&self, key: Key, mut distance: usize) -> Option<Value> {
+        let mut current = Rc::clone(&self.current.borrow());
+        while distance > 0 {
+            current = Rc::clone(current.parent.as_ref()?);
+            distance -= 1;
+        }
+        current.get(key)
+    }
+
+    pub fn modify_global<F, R>(&self, key: Key, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Value) -> R,
+    {
+        self.global.modify(key, f)
+    }
+
+    pub fn modify_at<F, R>(&self, key: Key, mut distance: usize, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Value) -> R,
+    {
+        let mut current = Rc::clone(&self.current.borrow());
+        while distance > 0 {
+            current = Rc::clone(current.parent.as_ref()?);
+            distance -= 1;
+        }
+        current.modify(key, f)
     }
 }
 
 impl Drop for EnvGuard<'_> {
     fn drop(&mut self) {
-        // check if the stack is invalid (parent scope is dropped before child scope)
-        if self.index != self.stack.len() - 1 {
-            panic!(
-                "invalid stack frame drop order (index: {}, len: {})",
-                self.index,
-                self.stack.len()
-            );
-        }
-        self.stack.stack.borrow_mut().pop();
+        self.env.destroy_scope();
+    }
+}
+
+impl Drop for EnvBindGuard<'_> {
+    fn drop(&mut self) {
+        self.env.rebind_scope(Rc::clone(&self.previous));
     }
 }

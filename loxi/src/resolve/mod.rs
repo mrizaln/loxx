@@ -1,8 +1,9 @@
+use std::fmt::Display;
+
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::interp::function::UserDefined;
-use crate::interp::interner::{Interner, Key};
+use crate::interp::interner::Key;
 use crate::parse::expr::{ExprId, RefExpr, ValExpr};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
@@ -11,8 +12,7 @@ use self::scope::{Scope, VarBind};
 
 mod scope;
 
-pub struct Resolver<'a> {
-    interner: &'a Interner,
+pub struct Resolver {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
 }
@@ -23,14 +23,14 @@ pub enum ResolveError {
     VariableInInitializer(Location),
 }
 
+#[derive(Default)]
 pub struct ResolveMap {
     resolved_expr: FxHashMap<ExprId, usize>,
 }
 
-impl Resolver<'_> {
-    pub fn new(interner: &Interner) -> Resolver {
+impl Resolver {
+    pub fn new() -> Resolver {
         Resolver {
-            interner,
             scope: Scope::new_empty(),
             resolved_expr: FxHashMap::default(),
         }
@@ -86,9 +86,14 @@ impl Resolver<'_> {
                 self.resolve_expr(condition)?;
                 self.resolve_stmt(body)
             }
-            Stmt::Function { func } => {
-                self.declare_and_define_var(func.name, func.loc);
-                self.resolve_function(func)
+            Stmt::Function {
+                name,
+                params,
+                body,
+                loc,
+            } => {
+                self.declare_and_define_var(*name, *loc);
+                self.resolve_function(params, body, *loc)
             }
             Stmt::Return { value, .. } => match value {
                 Some(value) => self.resolve_expr(value),
@@ -99,12 +104,12 @@ impl Resolver<'_> {
 
     fn resolve_expr(&mut self, expr: &Expr) -> Result<(), ResolveError> {
         match expr {
-            Expr::ValExpr(expr, id) => self.resolve_val_expr(expr, *id),
+            Expr::ValExpr(expr, _id) => self.resolve_val_expr(expr),
             Expr::RefExpr(expr, id) => self.resolve_ref_expr(expr, *id),
         }
     }
 
-    fn resolve_val_expr(&mut self, expr: &ValExpr, id: ExprId) -> Result<(), ResolveError> {
+    fn resolve_val_expr(&mut self, expr: &ValExpr) -> Result<(), ResolveError> {
         match expr {
             ValExpr::Literal { .. } => Ok(()),
             ValExpr::Unary { right, .. } => self.resolve_expr(right),
@@ -112,7 +117,7 @@ impl Resolver<'_> {
                 self.resolve_expr(left)?;
                 self.resolve_expr(right)
             }
-            ValExpr::Grouping { expr, .. } => self.resolve_val_expr(expr, id),
+            ValExpr::Grouping { expr, .. } => self.resolve_val_expr(expr),
             ValExpr::Logical { left, right, .. } => {
                 self.resolve_expr(left)?;
                 self.resolve_expr(right)
@@ -165,12 +170,17 @@ impl Resolver<'_> {
         }
     }
 
-    fn resolve_function(&mut self, func: &UserDefined) -> Result<(), ResolveError> {
+    fn resolve_function(
+        &mut self,
+        params: &[Key],
+        body: &[Stmt],
+        loc: Location,
+    ) -> Result<(), ResolveError> {
         self.scope.create_scope();
-        for param in func.params.iter() {
-            self.declare_and_define_var(*param, func.loc);
+        for param in params.iter() {
+            self.declare_and_define_var(*param, loc);
         }
-        for stmt in func.body.iter() {
+        for stmt in body.iter() {
             self.resolve_stmt(stmt)?;
         }
         self.scope.drop_scope();
@@ -207,5 +217,25 @@ impl ResolveError {
         match self {
             ResolveError::VariableInInitializer(loc) => *loc,
         }
+    }
+}
+
+impl ResolveMap {
+    pub fn distance(&self, expr_id: ExprId) -> Option<usize> {
+        self.resolved_expr
+            .iter()
+            .find(|v| *v.0 == expr_id)
+            .map(|v| v.1)
+            .copied()
+    }
+}
+
+impl Display for ResolveMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Resolved expressions:")?;
+        for (expr_id, distance) in self.resolved_expr.iter() {
+            writeln!(f, "  {:?} -> {}", expr_id, distance)?;
+        }
+        Ok(())
     }
 }

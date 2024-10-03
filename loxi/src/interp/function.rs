@@ -1,10 +1,12 @@
 use std::fmt::Debug;
+use std::rc::Rc;
 
 use thiserror::Error;
 
 use crate::parse::stmt::{Stmt, Unwind};
 use crate::util::Location;
 
+use super::env::DynamicEnv;
 use super::interner::Key;
 use super::RuntimeError;
 use super::{env::Env, value::Value};
@@ -15,7 +17,7 @@ pub enum Function {
     UserDefined(UserDefined),
 }
 
-type NativeFn = fn(args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError>;
+type NativeFn = fn(args: Box<[Value]>) -> Result<Value, RuntimeError>;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Native {
@@ -24,12 +26,13 @@ pub struct Native {
     pub body: NativeFn,
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct UserDefined {
     pub name: Key,
     pub params: Box<[Key]>,
     pub body: Box<[Stmt]>,
     pub loc: Location,
+    pub capture: Rc<Env>,
 }
 
 #[derive(Debug, Error)]
@@ -51,7 +54,7 @@ impl Native {
         self.params.len()
     }
 
-    pub fn call(&self, args: Box<[Value]>, env: &Env) -> Result<Value, RuntimeError> {
+    pub fn call(&self, args: Box<[Value]>) -> Result<Value, RuntimeError> {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: Location::new(0, 0),
@@ -61,8 +64,7 @@ impl Native {
             .into());
         }
 
-        let _local = env.create_scope();
-        (self.body)(args, env)
+        (self.body)(args)
     }
 }
 
@@ -75,12 +77,19 @@ impl FunctionError {
 }
 
 impl UserDefined {
-    pub fn new(name: Key, params: Box<[Key]>, body: Box<[Stmt]>, loc: Location) -> Self {
+    pub fn new(
+        name: Key,
+        params: Box<[Key]>,
+        body: Box<[Stmt]>,
+        loc: Location,
+        capture: Rc<Env>,
+    ) -> Self {
         Self {
             name,
             params,
             body,
             loc,
+            capture,
         }
     }
 
@@ -88,7 +97,12 @@ impl UserDefined {
         self.params.len()
     }
 
-    pub fn call<F>(&self, args: Box<[Value]>, env: &Env, mut exec: F) -> Result<Value, RuntimeError>
+    pub fn call<F>(
+        &self,
+        args: Box<[Value]>,
+        env: &DynamicEnv,
+        mut exec: F,
+    ) -> Result<Value, RuntimeError>
     where
         F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
     {
@@ -101,7 +115,7 @@ impl UserDefined {
             .into());
         }
 
-        let _local = env.create_scope();
+        let _guard = env.bind_scope(Rc::clone(&self.capture));
 
         // https://github.com/rust-lang/rust/issues/59878
         for (i, arg) in args.into_vec().into_iter().enumerate() {
@@ -115,5 +129,17 @@ impl UserDefined {
         }
 
         Ok(Value::nil())
+    }
+}
+
+impl PartialEq for UserDefined {
+    fn eq(&self, other: &Self) -> bool {
+        (self.name, self.arity(), self.loc) == (other.name, other.arity(), other.loc)
+    }
+}
+
+impl PartialOrd for UserDefined {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        (self.name, self.arity(), self.loc).partial_cmp(&(other.name, other.arity(), other.loc))
     }
 }

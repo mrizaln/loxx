@@ -2,13 +2,14 @@ use std::ops::Deref;
 
 use thiserror::Error;
 
-use crate::parse::expr::{Expr, RefExpr, ValExpr};
+use crate::parse::expr::{Expr, ExprId, RefExpr, ValExpr};
 use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
+use crate::resolve::ResolveMap;
 use crate::util::{Location, TokLoc};
 
-use self::env::Env;
-use self::function::Native;
-use self::interner::Interner;
+use self::env::DynamicEnv;
+use self::function::{Native, UserDefined};
+use self::interner::{Interner, Key};
 use self::value::Value;
 
 pub mod env;
@@ -53,15 +54,17 @@ impl RuntimeError {
 }
 
 pub struct Interpreter {
-    env: Env,
+    dyn_env: DynamicEnv,
     interner: Interner,
+    resolve_map: ResolveMap,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         let mut interp = Interpreter {
-            env: Env::new_with_global(),
+            dyn_env: DynamicEnv::new_with_global(),
             interner: Interner::new(),
+            resolve_map: ResolveMap::default(),
         };
         interp.populate_env();
         interp
@@ -71,7 +74,12 @@ impl Interpreter {
         &mut self.interner
     }
 
-    pub fn interpret(&self, program: Program) -> Result<(), RuntimeError> {
+    pub fn interpret(
+        &mut self,
+        program: Program,
+        mut resolve_map: ResolveMap,
+    ) -> Result<(), RuntimeError> {
+        std::mem::swap(&mut self.resolve_map, &mut resolve_map);
         for stmt in program.statements.iter() {
             match self.execute(stmt)? {
                 Unwind::None => (),
@@ -86,7 +94,7 @@ impl Interpreter {
     fn populate_env(&mut self) {
         let name = self.interner.get_or_intern("clock");
         let clock = Native::new(name, Box::new([]), native_functions::clock);
-        self.env.define(name, Value::native_function(clock));
+        self.dyn_env.define(name, Value::native_function(clock));
     }
 
     fn execute(&self, stmt: &Stmt) -> Result<Unwind, RuntimeError> {
@@ -101,28 +109,17 @@ impl Interpreter {
                 Ok(Unwind::None)
             }
             Stmt::Var { name, init, .. } => {
-                //
-                // there are two ways to implement this if the init is a RefExpr:
-                // - clone the init         -> the variable then becomes separate entity
-                // - reference the init     -> the variable then becomes an alias
-                // at this point, I don't know how Lox handle this thing, maybe in future chapters.
-                // if it was the latter, then I'll be damned, I have to implement the garbage
-                // collector very early on... or at least a system that can track the entities and
-                // their references. for now, I'll just clone the init.
-                //
-                //      -- 2024/09/19 02:57 [chapter 8.2: global variables]
-
                 let value = match init {
                     Some(expr) => self.eval(expr)?,
                     None => Value::nil(),
                 };
 
                 // TODO: add location metadata
-                self.env.define(*name, value);
+                self.dyn_env.define(*name, value);
                 Ok(Unwind::None)
             }
             Stmt::Block { statements } => {
-                let _local = self.env.create_scope();
+                let _local = self.dyn_env.create_scope();
                 for stmt in statements {
                     if let Unwind::Return(value, loc) = self.execute(stmt)? {
                         return Ok(Unwind::Return(value, loc));
@@ -161,9 +158,22 @@ impl Interpreter {
                 }
                 Ok(Unwind::None)
             }
-            // should I really clone here?
-            Stmt::Function { func } => {
-                self.env.define(func.name, Value::function(*func.clone()));
+            Stmt::Function {
+                name,
+                params,
+                body,
+                loc,
+            } => {
+                self.dyn_env.define(
+                    *name,
+                    Value::function(UserDefined::new(
+                        *name,
+                        params.clone(),
+                        body.clone(),
+                        *loc,
+                        self.dyn_env.current(),
+                    )),
+                );
                 Ok(Unwind::None)
             }
             Stmt::Return { value, loc } => {
@@ -178,8 +188,8 @@ impl Interpreter {
 
     pub fn eval(&self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
-            Expr::ValExpr(expr, _) => self.eval_val(expr),
-            Expr::RefExpr(expr, _) => self.eval_ref(expr),
+            Expr::ValExpr(expr, _id) => self.eval_val(expr),
+            Expr::RefExpr(expr, id) => self.eval_ref(expr, *id),
         }
     }
 
@@ -253,9 +263,9 @@ impl Interpreter {
                             .collect::<Result<Box<[_]>, _>>()?;
 
                         match func.deref() {
-                            function::Function::Native(func) => func.call(args, &self.env),
+                            function::Function::Native(func) => func.call(args),
                             function::Function::UserDefined(func) => {
-                                func.call(args, &self.env, |stmt| self.execute(stmt))
+                                func.call(args, &self.dyn_env, |stmt| self.execute(stmt))
                             }
                         }
                     }
@@ -265,20 +275,42 @@ impl Interpreter {
         }
     }
 
-    fn eval_ref(&self, expr: &RefExpr) -> Result<Value, RuntimeError> {
+    fn eval_ref(&self, expr: &RefExpr, id: ExprId) -> Result<Value, RuntimeError> {
         match expr {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
-            } => self.env.get(tok.name).ok_or_else(|| {
+            } => self.lookup_var(id, tok.name).ok_or_else(|| {
                 let var_name = self.interner.resolve(tok.name);
                 RuntimeError::UndefinedVariable(*loc, var_name.to_string())
             }),
-            RefExpr::Grouping { expr, .. } => self.eval_ref(expr),
+            RefExpr::Grouping { expr, .. } => self.eval_ref(expr, id),
             RefExpr::Assignment { var, value } => {
                 let value = self.eval(value)?;
-                self.env.modify(var.tok.name, |v| *v = value);
-                Ok(self.env.get(var.tok.name).unwrap())
+                match self.modify_var(id, var.tok.name, |v| *v = value) {
+                    Some(_) => Ok(self.lookup_var(id, var.tok.name).unwrap()),
+                    None => Err(RuntimeError::UndefinedVariable(
+                        var.loc,
+                        self.interner.resolve(var.tok.name).to_owned(),
+                    )),
+                }
             }
+        }
+    }
+
+    fn lookup_var(&self, expr_id: ExprId, key: Key) -> Option<Value> {
+        match self.resolve_map.distance(expr_id) {
+            Some(distance) => self.dyn_env.get_at(key, distance),
+            None => self.dyn_env.get_global(key),
+        }
+    }
+
+    fn modify_var<F, R>(&self, expr_id: ExprId, key: Key, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Value) -> R,
+    {
+        match self.resolve_map.distance(expr_id) {
+            Some(distance) => self.dyn_env.modify_at(key, distance, f),
+            None => self.dyn_env.modify_global(key, f),
         }
     }
 }
@@ -286,7 +318,7 @@ impl Interpreter {
 mod native_functions {
     use super::*;
 
-    pub fn clock(_args: Box<[Value]>, _env: &Env) -> Result<Value, RuntimeError> {
+    pub fn clock(_args: Box<[Value]>) -> Result<Value, RuntimeError> {
         let now = std::time::SystemTime::now();
         let seconds = now
             .duration_since(std::time::UNIX_EPOCH)

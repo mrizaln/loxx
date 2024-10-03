@@ -103,7 +103,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     }
 
     // resolving
-    let mut resolver = Resolver::new(interner);
+    let mut resolver = Resolver::new();
     let resolve_map = resolver.resolve(&program).map_err(|err| {
         print_context(&lines, err.loc());
         println_red!("{}", err);
@@ -111,7 +111,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     })?;
 
     // interpreting
-    interpreter.interpret(program).map_err(|err| {
+    interpreter.interpret(program, resolve_map).map_err(|err| {
         print_context(&lines, err.loc());
         println_red!("{}", err);
         LoxError::RuntimeError

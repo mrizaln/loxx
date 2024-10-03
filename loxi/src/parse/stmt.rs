@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Display};
 
 use crate::interp::interner::{Interner, Key};
-use crate::interp::{function::UserDefined, value::Value};
+use crate::interp::value::Value;
 use crate::util::Location;
 
 use super::expr::Expr;
@@ -35,7 +35,10 @@ pub enum Stmt {
         body: Box<Stmt>,
     },
     Function {
-        func: Box<UserDefined>,
+        name: Key,
+        params: Box<[Key]>,
+        body: Box<[Stmt]>,
+        loc: Location,
     },
     Return {
         loc: Location,
@@ -113,13 +116,15 @@ impl Display for DisplayedStmt<'_, '_> {
                 let body = body.display(interner);
                 write!(f, "(while {condition} {body})")
             }
-            Stmt::Function { func } => {
-                write!(f, "(fun (")?;
-                for param in &func.params {
+            Stmt::Function {
+                name, params, body, ..
+            } => {
+                write!(f, "(fun {} (", interner.resolve(*name))?;
+                for param in params {
                     write!(f, " {}", interner.resolve(*param))?;
                 }
                 write!(f, ")")?;
-                for stmt in &func.body {
+                for stmt in body {
                     write!(f, " {}", stmt.display(interner))?;
                 }
                 write!(f, ")")
