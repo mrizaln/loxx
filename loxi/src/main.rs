@@ -43,11 +43,12 @@ fn main() -> ExitCode {
             if let Err(err) = run_file(path, mode) {
                 eprintln!("{err}");
                 return match err {
+                    LoxError::EmptyError => ExitCode::SUCCESS,
                     LoxError::IoError(_) => ExitCode::FAILURE,
                     LoxError::LexError(_) => ExitCode::from(65),
                     LoxError::ParseError => ExitCode::from(65),
+                    LoxError::ResolveError => ExitCode::from(65),
                     LoxError::RuntimeError => ExitCode::from(70),
-                    LoxError::EmptyError => ExitCode::SUCCESS,
                 };
             }
             ExitCode::SUCCESS

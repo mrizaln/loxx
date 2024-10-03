@@ -1,3 +1,76 @@
+//! Lox Grammar (unfinished)
+//!  ------------------------
+//! program     -> declaration* EOF ;
+//!
+//! declaration -> fun_decl
+//!                 | var_decl
+//!                 | statement ;
+//!
+//! fun_dec     -> "fun" function ;
+//!
+//! function    -> IDENTIFIER "(" parameters? ")" block ;
+//!
+//! parameters  -> IDENTIFIER ( "," IDENTIFIER )* ;
+//!
+//! var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
+//!
+//! statement   -> expr_stmt
+//!                 | for_stmt
+//!                 | if_stmt
+//!                 | print_stmt
+//!                 | return_stmt
+//!                 | while_stmt
+//!                 | block ;
+//!
+//! block       -> "{" declaration* "}"
+//!
+//! expr_stmt   -> expression ";" ;
+//!
+//! if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
+//!
+//! print_stmt  -> "print" expression ";" ;
+//!
+//! while_stmt  -> "while" "(" expression ")" statement ;
+//!
+//! for_stmt    -> "for" "(" (var_decl | expr_stmt | ";")
+//!                 expression? ";"
+//!                 expression? ")" statement ;
+//!
+//! return_stmt -> "return" expression? ";" ;
+//!
+//! expression  -> assignment ;
+//!
+//! assignment  -> IDENTIFIER "=" assignment
+//!                 | logical_or ;
+//!
+//! logical_or  -> logical_and ( "or" logical_and )* ;
+//!
+//! logical_and -> equality ( "and" equality )* ;
+//!
+//! equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
+//!
+//! comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+//!
+//! term        -> factor ( ( "-" | "+" ) factor )* ;
+//!
+//! factor      -> unary ( ( "/" | "*" ) unary )* ;
+//!
+//! unary       -> ( "!" | "-" ) unary | call ;
+//!
+//! call        -> primary ( "(" arguments? ")" )* ;
+//!
+//! arguments   -> expression ( "," expression )* ;
+//!
+//! primary     -> NUMBER
+//!                 | STRING
+//!                 | "true"
+//!                 | "false"
+//!                 | "nil"
+//!                 | grouping
+//!                 | IDENTIFIER ;
+//!
+//! grouping    -> "(" expression ")"
+
 use std::collections::VecDeque;
 use std::fmt::Display;
 use thiserror::Error;
@@ -18,79 +91,6 @@ pub mod token;
 
 #[cfg(test)]
 mod test;
-
-// Lox Grammar (unfinished)
-//  ------------------------
-// program     -> declaration* EOF ;
-//
-// declaration -> fun_decl
-//                 | var_decl
-//                 | statement ;
-//
-// fun_dec     -> "fun" function ;
-//
-// function    -> IDENTIFIER "(" parameters? ")" block ;
-//
-// parameters  -> IDENTIFIER ( "," IDENTIFIER )* ;
-//
-// var_decl    -> "var" IDENTIFIER ( "=" expression)? ";" ;
-//
-// statement   -> expr_stmt
-//                 | for_stmt
-//                 | if_stmt
-//                 | print_stmt
-//                 | return_stmt
-//                 | while_stmt
-//                 | block ;
-//
-// block       -> "{" declaration* "}"
-//
-// expr_stmt   -> expression ";" ;
-//
-// if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
-//
-// print_stmt  -> "print" expression ";" ;
-//
-// while_stmt  -> "while" "(" expression ")" statement ;
-//
-// for_stmt    -> "for" "(" (var_decl | expr_stmt | ";")
-//                 expression? ";"
-//                 expression? ")" statement ;
-//
-// return_stmt -> "return" expression? ";" ;
-//
-// expression  -> assignment ;
-//
-// assignment  -> IDENTIFIER "=" assignment
-//                 | logical_or ;
-//
-// logical_or  -> logical_and ( "or" logical_and )* ;
-//
-// logical_and -> equality ( "and" equality )* ;
-//
-// equality    -> comparison ( ( "!=" | "==" ) comparison )* ;
-//
-// comparison  -> term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
-//
-// term        -> factor ( ( "-" | "+" ) factor )* ;
-//
-// factor      -> unary ( ( "/" | "*" ) unary )* ;
-//
-// unary       -> ( "!" | "-" ) unary | call ;
-//
-// call        -> primary ( "(" arguments? ")" )* ;
-//
-// arguments   -> expression ( "," expression )* ;
-//
-// primary     -> NUMBER
-//                 | STRING
-//                 | "true"
-//                 | "false"
-//                 | "nil"
-//                 | grouping
-//                 | IDENTIFIER ;
-//
-// grouping    -> "(" expression ")"
 
 #[derive(Debug, Error)]
 pub enum SyntaxError {
@@ -651,8 +651,8 @@ impl Parser {
                     _ => Err(missing_delim!(")", loc))?,
                 };
                 match *expr {
-                    Expr::ValExpr(expr, _) => Expr::group_val(Box::new(expr), loc),
-                    Expr::RefExpr(expr, _) => Expr::group_ref(Box::new(expr), loc),
+                    Expr::ValExpr(expr, id) => Expr::group_val(Box::new(expr), loc, id),
+                    Expr::RefExpr(expr, id) => Expr::group_ref(Box::new(expr), loc, id),
                 }
             }
 
@@ -794,7 +794,10 @@ mod conv {
 
 impl Program {
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedProgram<'a, 'b> {
-        DisplayedProgram { program: self, interner }
+        DisplayedProgram {
+            program: self,
+            interner,
+        }
     }
 }
 

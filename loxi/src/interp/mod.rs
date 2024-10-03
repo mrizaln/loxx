@@ -72,7 +72,7 @@ impl Interpreter {
         &mut self.interner
     }
 
-    pub fn interpret(&mut self, program: Program) -> Result<(), RuntimeError> {
+    pub fn interpret(&self, program: Program) -> Result<(), RuntimeError> {
         for stmt in program.statements.iter() {
             match self.execute(stmt)? {
                 Unwind::None => (),

@@ -6,11 +6,13 @@ use thiserror::Error;
 use self::interp::Interpreter;
 use self::lex::{Lexer, ScanResult};
 use self::parse::Parser;
+use self::resolve::Resolver;
 use self::util::Location;
 
 mod interp;
 mod lex;
 mod parse;
+mod resolve;
 mod util;
 
 macro_rules! println_red {
@@ -25,13 +27,16 @@ pub enum LoxError {
     #[error("--[ LoxError ]-- Could not read file: '{0}'")]
     IoError(#[from] io::Error),
 
-    #[error("--[ LoxError ]-- {0} Lexing errors occurred, aborting...")]
+    #[error("--[ LoxError ]-- {0} Lexing errors occurred, aborting.")]
     LexError(usize),
 
-    #[error("--[ LoxError ]-- Parsing error occured, aborting...")]
+    #[error("--[ LoxError ]-- Parsing error occured, aborting.")]
     ParseError,
 
-    #[error("--[ LoxError ]-- Runtime error occured, aborting...")]
+    #[error("--[ LoxError ]-- Resolving error occurred, aborting.")]
+    ResolveError,
+
+    #[error("--[ LoxError ]-- Runtime error occured, aborting.")]
     RuntimeError,
 
     #[error("--[ LoxError ]-- Empty file")]
@@ -89,16 +94,21 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
             print_context(&lines, e.loc());
             println_red!("{}", e);
         });
-
         LoxError::ParseError
     })?;
 
     if mode == RunMode::DumpParse {
-        for stmt in program.statements.iter() {
-            println!("{}", stmt.display(interner));
-        }
+        println!("{}", program.display(interner));
         return Ok(());
     }
+
+    // resolving
+    let mut resolver = Resolver::new(interner);
+    let resolve_map = resolver.resolve(&program).map_err(|err| {
+        print_context(&lines, err.loc());
+        println_red!("{}", err);
+        LoxError::ResolveError
+    })?;
 
     // interpreting
     interpreter.interpret(program).map_err(|err| {

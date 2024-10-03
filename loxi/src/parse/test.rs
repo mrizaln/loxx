@@ -50,7 +50,7 @@ fn get_reference_ast() -> Expr {
         right: lit3.boxed(),
     };
 
-    let grp1 = Expr::group_val(Box::new(bin_min), loc(1, 5));
+    let grp1 = Expr::group_val(Box::new(bin_min), loc(1, 5), ExprId::new());
     let bin_1_grp1 = Expr::binary(lit1.boxed(), star, grp1.boxed());
     let bin_lt = Expr::binary(bin_1_grp1.boxed(), lt, lit4.boxed());
 

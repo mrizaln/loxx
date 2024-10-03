@@ -14,7 +14,7 @@ pub enum Expr {
 }
 
 /// ExprId is used to identify an expression, it's ignored in comparison and ordering.
-#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExprId {
     id: usize,
 }
@@ -120,8 +120,9 @@ impl Expr {
         })
     }
 
-    pub fn group_val(expr: Box<ValExpr>, loc: Location) -> Self {
-        val_expr!(Grouping { expr, loc })
+    // group inherits its inner ExprId
+    pub fn group_val(expr: Box<ValExpr>, loc: Location, id: ExprId) -> Self {
+        Expr::ValExpr(ValExpr::Grouping { expr, loc }, id)
     }
 
     pub fn logical(left: Box<Expr>, kind: TokLoc<token::LogicalOp>, right: Box<Expr>) -> Self {
@@ -136,8 +137,9 @@ impl Expr {
         ref_expr!(Variable { var })
     }
 
-    pub fn group_ref(expr: Box<RefExpr>, loc: Location) -> Self {
-        ref_expr!(Grouping { expr, loc })
+    // groups inherits its inner ExprId
+    pub fn group_ref(expr: Box<RefExpr>, loc: Location, id: ExprId) -> Self {
+        Expr::RefExpr(RefExpr::Grouping { expr, loc }, id)
     }
 
     pub fn assignment(var: TokLoc<token::Variable>, value: Box<Expr>) -> Self {
