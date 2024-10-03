@@ -20,6 +20,8 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    coredump::register_panic_handler().unwrap();
+
     let args = Args::parse();
 
     match args.source {

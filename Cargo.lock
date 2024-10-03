@@ -122,6 +122,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fd119d74b830634cea2a0f58bbd0d54540518a14397557951e79340abc28c0"
 
 [[package]]
+name = "coredump"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7b12ca865ce2c375a629bc88221bdcdfaf9bdf6d8e966d7a6dbd2f6c4ceb335"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,10 +174,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libc"
+version = "0.2.159"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "561d97a539a36e26a9a5fad1ea11a3039a67714694aaa379433e580854bc3dc5"
+
+[[package]]
 name = "loxi"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "coredump",
  "indoc",
  "lasso",
  "pretty_assertions",
