@@ -44,35 +44,60 @@ impl Env {
         map.insert(key, value);
     }
 
-    pub fn get_at(&self, key: Key, index: usize) -> Option<RefMut<'_, Value>> {
-        if index >= self.len() {
-            panic!(
-                "index exceed the len of vec (index: {}, size: {})",
-                index,
-                self.len()
-            );
+    pub fn distance(&self, key: Key) -> Option<usize> {
+        let index = self.index();
+        for i in (0..=index).rev() {
+            if self.get_map(i).contains_key(&key) {
+                return Some(index);
+            }
         }
-        let map = self.get_map(index);
-        RefMut::filter_map(map, |m| m.get_mut(&key)).ok()
+        None
     }
 
-    pub fn get(&self, key: Key) -> Option<RefMut<'_, Value>> {
+    pub fn get_at(&self, key: Key, distance: usize) -> Option<Value> {
+        self.validate(distance);
+        let map = self.get_map(self.index() - distance);
+        map.get(&key).cloned()
+    }
+
+    pub fn get(&self, key: Key) -> Option<Value> {
         for i in (0..=self.index()).rev() {
-            if let Some(value) = self.get_at(key, i) {
-                return Some(value);
+            if let Some(value) = self.get_map(i).get(&key) {
+                return Some(value.clone());
+            }
+        }
+        None
+    }
+
+    pub fn modify_at<F, R>(&self, key: Key, distance: usize, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Value) -> R,
+    {
+        self.validate(distance);
+        let mut map = self.get_map(self.index() - distance);
+        map.get_mut(&key).map(f)
+    }
+
+    pub fn modify<F, R>(&self, key: Key, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Value) -> R,
+    {
+        for i in (0..=self.index()).rev() {
+            if let Some(value) = self.get_map(i).get_mut(&key) {
+                return Some(f(value));
             }
         }
         None
     }
 
     fn get_map(&self, index: usize) -> RefMut<'_, FxHashMap<Key, Value>> {
+        let len = self.len();
         let stack = self.stack.borrow_mut();
         RefMut::map(stack, |stack| {
             stack.get_mut(index).unwrap_or_else(|| {
                 panic!(
                     "iter should point to a valid stack frame (index: {}, len: {})",
-                    index,
-                    self.len()
+                    index, len
                 )
             })
         })
@@ -80,6 +105,16 @@ impl Env {
 
     fn index(&self) -> usize {
         self.len() - 1
+    }
+
+    fn validate(&self, distance: usize) {
+        if distance >= self.len() {
+            panic!(
+                "index exceed the len of vec (index: {}, size: {})",
+                distance,
+                self.len()
+            );
+        }
     }
 }
 

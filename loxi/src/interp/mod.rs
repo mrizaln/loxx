@@ -1,4 +1,3 @@
-use std::cell::RefMut;
 use std::ops::Deref;
 
 use thiserror::Error;
@@ -93,11 +92,12 @@ impl Interpreter {
     fn execute(&self, stmt: &Stmt) -> Result<Unwind, RuntimeError> {
         match stmt {
             Stmt::Expr { expr } => {
-                self.eval_unit(expr)?;
+                self.eval(expr)?;
                 Ok(Unwind::None)
             }
             Stmt::Print { expr, .. } => {
-                self.eval_fn(expr, |v| println!("{}", v.display(&self.interner)))?;
+                let value = self.eval(expr)?;
+                println!("{}", value.display(&self.interner));
                 Ok(Unwind::None)
             }
             Stmt::Var { name, init, .. } => {
@@ -113,7 +113,7 @@ impl Interpreter {
                 //      -- 2024/09/19 02:57 [chapter 8.2: global variables]
 
                 let value = match init {
-                    Some(expr) => self.eval_cloned(expr)?,
+                    Some(expr) => self.eval(expr)?,
                     None => Value::nil(),
                 };
 
@@ -135,7 +135,7 @@ impl Interpreter {
                 then,
                 otherwise,
                 ..
-            } => match self.eval_fn(condition, |v| v.truthiness())? {
+            } => match self.eval(condition)?.truthiness() {
                 true => {
                     if let Unwind::Return(value, loc) = self.execute(then)? {
                         Ok(Unwind::Return(value, loc))
@@ -154,7 +154,7 @@ impl Interpreter {
             Stmt::While {
                 condition, body, ..
             } => {
-                while self.eval_fn(condition, |v| v.truthiness())? {
+                while self.eval(condition)?.truthiness() {
                     if let Unwind::Return(value, loc) = self.execute(body)? {
                         return Ok(Unwind::Return(value, loc));
                     }
@@ -168,7 +168,7 @@ impl Interpreter {
             }
             Stmt::Return { value, loc } => {
                 let value = match value {
-                    Some(expr) => self.eval_cloned(expr)?,
+                    Some(expr) => self.eval(expr)?,
                     None => Value::nil(),
                 };
                 Ok(Unwind::Return(value, *loc))
@@ -176,34 +176,11 @@ impl Interpreter {
         }
     }
 
-    /// Evaluate `Expr` as if it produces a `&mut Value`. The reference can only be used in `f`.
-    pub fn eval_fn<R, F>(&self, expr: &Expr, f: F) -> Result<R, RuntimeError>
-    where
-        F: FnOnce(&mut Value) -> R,
-    {
-        let val = match expr {
-            Expr::ValExpr(expr, _) => &mut self.eval_val(expr)?,
-            Expr::RefExpr(expr, _) => &mut self.eval_ref(expr)?,
-        };
-        Ok(f(val))
-    }
-
-    /// Evaluate the expression and return a `Value`. If the `Expr` is a `RefExpr`, the contained
-    /// `Value` will be cloned, if it's a ValExpr the value will be returned as is.
-    pub fn eval_cloned(&self, expr: &Expr) -> Result<Value, RuntimeError> {
+    pub fn eval(&self, expr: &Expr) -> Result<Value, RuntimeError> {
         match expr {
             Expr::ValExpr(expr, _) => self.eval_val(expr),
-            Expr::RefExpr(expr, _) => self.eval_ref(expr).map(|v| v.clone()),
+            Expr::RefExpr(expr, _) => self.eval_ref(expr),
         }
-    }
-
-    /// Evaluate the expression without returning a value.
-    pub fn eval_unit(&self, expr: &Expr) -> Result<(), RuntimeError> {
-        match expr {
-            Expr::ValExpr(expr, _) => self.eval_val(expr).map(|_| {})?,
-            Expr::RefExpr(expr, _) => self.eval_ref(expr).map(|_| {})?,
-        };
-        Ok(())
     }
 
     fn eval_val(&self, expr: &ValExpr) -> Result<Value, RuntimeError> {
@@ -217,7 +194,7 @@ impl Interpreter {
             },
             ValExpr::Grouping { expr, .. } => self.eval_val(expr),
             ValExpr::Unary { operator, right } => {
-                let value = self.eval_cloned(right)?;
+                let value = self.eval(right)?;
                 match operator.tok {
                     token::UnaryOp::Minus => value.minus(),
                     token::UnaryOp::Not => Ok(value.not()),
@@ -234,8 +211,8 @@ impl Interpreter {
                 operator,
                 right,
             } => {
-                let lhs = self.eval_cloned(left)?;
-                let rhs = self.eval_cloned(right)?;
+                let lhs = self.eval(left)?;
+                let rhs = self.eval(right)?;
 
                 match operator.tok {
                     token::BinaryOp::Add => lhs.add(rhs, &self.interner),
@@ -257,22 +234,22 @@ impl Interpreter {
                 })
             }
             ValExpr::Logical { left, kind, right } => {
-                let lhs = self.eval_cloned(left)?;
+                let lhs = self.eval(left)?;
                 match (&kind.tok, lhs.truthiness()) {
                     (token::LogicalOp::And, false) => return Ok(lhs),
                     (token::LogicalOp::Or, true) => return Ok(lhs),
                     (_, _) => (),
                 };
-                self.eval_cloned(right)
+                self.eval(right)
             }
             ValExpr::Call { callee, loc, args } => {
-                let callee = self.eval_cloned(callee)?;
+                let callee = self.eval(callee)?;
 
                 match callee {
                     Value::Function(func) => {
                         let args = args
                             .into_iter()
-                            .map(|a| self.eval_cloned(a))
+                            .map(|a| self.eval(a))
                             .collect::<Result<Box<[_]>, _>>()?;
 
                         match func.deref() {
@@ -288,7 +265,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_ref(&self, expr: &RefExpr) -> Result<RefMut<'_, Value>, RuntimeError> {
+    fn eval_ref(&self, expr: &RefExpr) -> Result<Value, RuntimeError> {
         match expr {
             RefExpr::Variable {
                 var: TokLoc { tok, loc },
@@ -298,17 +275,9 @@ impl Interpreter {
             }),
             RefExpr::Grouping { expr, .. } => self.eval_ref(expr),
             RefExpr::Assignment { var, value } => {
-                let value = self.eval_cloned(value)?;
-                self.env
-                    .get(var.tok.name)
-                    .ok_or_else(|| {
-                        let var_name = self.interner.resolve(var.tok.name);
-                        RuntimeError::UndefinedVariable(var.loc, var_name.to_string())
-                    })
-                    .map(|mut v| {
-                        *v = value;
-                        v
-                    })
+                let value = self.eval(value)?;
+                self.env.modify(var.tok.name, |v| *v = value);
+                Ok(self.env.get(var.tok.name).unwrap())
             }
         }
     }
