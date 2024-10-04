@@ -43,6 +43,11 @@ pub struct Variable {
     pub name: Key,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct DotProp {
+    pub name: Key,
+}
+
 pub struct DisplayedLiteral<'a, 'b> {
     literal: &'a Literal,
     interner: &'b Interner,
@@ -177,3 +182,4 @@ impl Token for UnaryOp {}
 impl Token for BinaryOp {}
 impl Token for LogicalOp {}
 impl Token for Variable {}
+impl Token for DotProp {}

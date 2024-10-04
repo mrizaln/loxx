@@ -43,7 +43,7 @@
 //!
 //! expression  -> assignment ;
 //!
-//! assignment  -> IDENTIFIER "=" assignment
+//! assignment  -> (call "." )? IDENTIFIER "=" assignment
 //!                 | logical_or ;
 //!
 //! logical_or  -> logical_and ( "or" logical_and )* ;
@@ -60,7 +60,7 @@
 //!
 //! unary       -> ( "!" | "-" ) unary | call ;
 //!
-//! call        -> primary ( "(" arguments? ")" )* ;
+//! call        -> primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
 //!
 //! arguments   -> expression ( "," expression )* ;
 //!
@@ -577,8 +577,12 @@ impl Parser {
                 match *expr {
                     Expr::RefExpr(lvalue, _) => match lvalue {
                         RefExpr::Variable { var } => Ok(Expr::assignment(var, value).boxed()),
-                        RefExpr::Assignment { .. } => unreachable!(),
+                        RefExpr::Get { object, prop } => Ok(Expr::set(object, prop, value).boxed()),
                         RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
+
+                        // RefExpr::Grouping should protect these cases
+                        RefExpr::Assignment { .. } => unreachable!(),
+                        RefExpr::Set { .. } => unreachable!(),
                     },
                     Expr::ValExpr(_, _) => Err(syntax_error!("<lvalue>", "<rvalue>", loc)),
                 }
@@ -634,6 +638,16 @@ impl Parser {
                 is_tok!(Punctuation::ParenLeft) => {
                     let loc = self.advance().unwrap().loc();
                     expr = self.finish_call(loc, expr)?;
+                    Ok(())
+                }
+                is_tok!(Punctuation::Dot) => {
+                    let loc = self.advance().unwrap().loc();
+                    let name = peek_no_eof! { self as ["<identifier>"]
+                        if is_tok!(Literal::Identifier(name, _)) => *name,
+                    }?;
+                    self.advance();
+                    let tok = TokLoc::new(token::DotProp { name }, loc);
+                    expr = Expr::get(expr, tok).boxed();
                     Ok(())
                 }
                 _ => break,

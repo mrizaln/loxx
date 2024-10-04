@@ -1,5 +1,7 @@
 use std::ops::Deref;
+use std::rc::Rc;
 
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::parse::expr::{Expr, ExprId, RefExpr, ValExpr};
@@ -7,9 +9,9 @@ use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::resolve::ResolveMap;
 use crate::util::{Location, TokLoc};
 
-use self::class::Class;
+use self::class::{Class, Property};
 use self::env::DynamicEnv;
-use self::function::{Native, UserDefined};
+use self::function::{Function, Native, UserDefined};
 use self::interner::{Interner, Key};
 use self::value::Value;
 
@@ -33,6 +35,12 @@ pub enum RuntimeError {
     #[error("{0}")]
     FunctionError(#[from] function::FunctionError),
 
+    #[error("{0} RuntimeError: Trying to access a property on a non-instance object")]
+    InvalidPropertyAccess(Location),
+
+    #[error("{0} RuntimeError: Trying to access an undefined property")]
+    UndefinedProperty(Location),
+
     #[error("{0} RuntimeError: Not a function or a callable object")]
     NotCallable(Location),
 }
@@ -45,6 +53,8 @@ impl RuntimeError {
             RuntimeError::UndefinedVariable(loc, _) => *loc,
             RuntimeError::FunctionError(err) => err.loc(),
             RuntimeError::NotCallable(loc) => *loc,
+            RuntimeError::InvalidPropertyAccess(loc) => *loc,
+            RuntimeError::UndefinedProperty(loc) => *loc,
         }
     }
 }
@@ -175,9 +185,26 @@ impl Interpreter {
                 Ok(Unwind::Return(value, *loc))
             }
             Stmt::Class { loc, name, methods } => {
-                // TODO: the author seems to handle this differently, revisit this in the future
-                let value = Value::class(Class::new(*name, methods.clone(), *loc));
+                // // is this really necessary?
+                // self.dyn_env.define(*name, Value::Nil);
+
+                let methods = methods
+                    .iter()
+                    .map(|m| {
+                        let func = Function::UserDefined(UserDefined::new(
+                            m.name,
+                            m.params.clone(),
+                            m.body.clone(),
+                            m.loc,
+                            self.dyn_env.current(),
+                        ));
+                        (m.name, Rc::new(func))
+                    })
+                    .collect::<FxHashMap<_, _>>();
+
+                let value = Value::class(Class::new(*name, methods, *loc));
                 self.dyn_env.define(*name, value);
+
                 Ok(Unwind::None)
             }
         }
@@ -295,6 +322,28 @@ impl Interpreter {
                     )),
                 }
             }
+            RefExpr::Get { object, prop } => match self.eval(object)? {
+                Value::Instance(instance) => match instance.get(prop.tok.name) {
+                    None => Err(RuntimeError::UndefinedProperty(prop.loc)),
+                    Some(prop) => match prop {
+                        Property::Field(value) => Ok(value),
+                        Property::Method(func) => Ok(Value::Function(func)),
+                    },
+                },
+                _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
+            },
+            RefExpr::Set {
+                object,
+                prop,
+                value,
+            } => match self.eval(object)? {
+                Value::Instance(instance) => {
+                    let value = self.eval(value)?;
+                    instance.set(prop.tok.name, value.clone());
+                    Ok(value)
+                }
+                _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
+            },
         }
     }
 

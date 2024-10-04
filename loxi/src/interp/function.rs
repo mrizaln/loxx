@@ -119,7 +119,7 @@ impl UserDefined {
 
         // https://github.com/rust-lang/rust/issues/59878
         for (i, arg) in args.into_vec().into_iter().enumerate() {
-            env.define(self.params[i], arg.clone());
+            env.define(self.params[i], arg);
         }
 
         for stmt in self.body.iter() {

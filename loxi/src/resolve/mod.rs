@@ -20,6 +20,7 @@ pub struct Resolver {
 
 enum Context {
     Function,
+    Method,
     None,
 }
 
@@ -112,13 +113,18 @@ impl Resolver {
                     None => Ok(()),
                 }
             }
-            Stmt::Class {
-                loc,
-                name,
-                methods: _,
-            } => {
-                self.declare_and_define_var(*name, *loc)
+            Stmt::Class { loc, name, methods } => {
+                self.declare_and_define_var(*name, *loc)?;
                 // NOTE: methods resolved separately
+                for method in methods.iter() {
+                    self.resolve_function(
+                        &method.params,
+                        &method.body,
+                        method.loc,
+                        Context::Method,
+                    )?;
+                }
+                Ok(())
             }
         }
     }
@@ -171,6 +177,18 @@ impl Resolver {
                 self.resolve_expr(value)?;
                 self.resolve_local(id, name, var.loc);
                 Ok(())
+            }
+            RefExpr::Get { object, prop: _ } => {
+                // NOTE: prop are looked up dynamically
+                self.resolve_expr(object)
+            }
+            RefExpr::Set {
+                object,
+                prop: _,
+                value,
+            } => {
+                self.resolve_expr(value)?;
+                self.resolve_expr(object)
             }
         }
     }

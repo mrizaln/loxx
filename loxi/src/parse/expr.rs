@@ -64,6 +64,15 @@ pub enum RefExpr {
         var: TokLoc<token::Variable>,
         value: Box<Expr>,
     },
+    Get {
+        object: Box<Expr>,
+        prop: TokLoc<token::DotProp>,
+    },
+    Set {
+        object: Box<Expr>,
+        prop: TokLoc<token::DotProp>,
+        value: Box<Expr>,
+    },
 }
 
 pub struct DisplayedExpr<'a, 'b> {
@@ -144,6 +153,21 @@ impl Expr {
 
     pub fn assignment(var: TokLoc<token::Variable>, value: Box<Expr>) -> Self {
         ref_expr!(Assignment { var, value })
+    }
+
+    pub fn get(object: Box<Expr>, prop: TokLoc<token::DotProp>) -> Self {
+        Expr::RefExpr(RefExpr::Get { object, prop }, ExprId::new())
+    }
+
+    pub fn set(object: Box<Expr>, prop: TokLoc<token::DotProp>, value: Box<Expr>) -> Self {
+        Expr::RefExpr(
+            RefExpr::Set {
+                object,
+                prop,
+                value,
+            },
+            ExprId::new(),
+        )
     }
 }
 
@@ -262,6 +286,20 @@ impl Display for DisplayedRefExpr<'_, '_> {
                 let name = interner.resolve(var.tok.name);
                 write!(f, "(= {} {})", name, value.display(interner))
             }
+            RefExpr::Get { object, prop } => {
+                write!(
+                    f,
+                    "(get {} {})",
+                    object.display(interner),
+                    interner.resolve(prop.tok.name)
+                )
+            }
+            RefExpr::Set { object, value, .. } => write!(
+                f,
+                "(set {} {})",
+                object.display(interner),
+                value.display(interner)
+            ),
         }
     }
 }
