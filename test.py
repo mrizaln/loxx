@@ -14,6 +14,7 @@ from collections.abc import Callable
 from contextlib import chdir
 from dataclasses import dataclass
 from enum import Enum
+from os import system
 from os.path import realpath, dirname
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired, run
@@ -570,6 +571,8 @@ def main() -> int:
         case (None, e):
             filter = Filter(re.compile(fnmatch.translate(e)), True)
 
+    clear_screen();
+
     # prepare the interpreters
     if not prepare_interpreters():
         return 2
@@ -602,6 +605,14 @@ def main() -> int:
 # -----------------------------------------------------------------------------
 # test details
 # -----------------------------------------------------------------------------
+
+
+def clear_screen():
+    match sys.platform:
+        case "win32":
+            system("cls")
+        case "linux" | "darwin":
+            system("clear")
 
 
 def prepare_interpreters() -> bool:
