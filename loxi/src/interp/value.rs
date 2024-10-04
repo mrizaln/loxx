@@ -1,18 +1,19 @@
 use std::rc::Rc;
 use std::{fmt::Display, ops::Deref};
 
-use super::function::{Function, UserDefined, Native};
+use super::class::{Class, Instance};
+use super::function::{Function, Native, UserDefined};
 use super::interner::{Interner, Key};
-use super::object::Object;
 
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum Value {
     Nil,
     Bool(bool),
     Number(f64),
+    Class(Rc<Class>),
     String(Rc<String>),
-    Object(Rc<Object>),
     Function(Rc<Function>),
+    Instance(Rc<Instance>),
 
     /// `StringLiteral` is a special case of string, the value is static.
     /// It can only produces real `String` if it was operated on.
@@ -49,12 +50,12 @@ impl Value {
         Value::Number(num)
     }
 
-    pub fn string(str: String) -> Self {
-        Value::String(Rc::new(str))
+    pub fn class(class: Class) -> Self {
+        Value::Class(Rc::new(class))
     }
 
-    pub fn object(obj: Object) -> Self {
-        Value::Object(Rc::new(obj))
+    pub fn string(str: String) -> Self {
+        Value::String(Rc::new(str))
     }
 
     pub fn function(func: UserDefined) -> Self {
@@ -63,6 +64,10 @@ impl Value {
 
     pub fn native_function(func: Native) -> Self {
         Value::Function(Rc::new(Function::Native(func)))
+    }
+
+    pub fn instance(instance: Instance) -> Self {
+        Value::Instance(Rc::new(instance))
     }
 
     pub fn string_literal(key: Key) -> Self {
@@ -184,7 +189,8 @@ impl Value {
             Value::Bool(_) => "<bool>",
             Value::Number(_) => "<number>",
             Value::String(_) => "<string>",
-            Value::Object(_) => "<object>",
+            Value::Class(_) => "<class>",
+            Value::Instance(_) => "<instance>",
             Value::Function(_) => "<function>",
             Value::StringLiteral(_) => "<string_literal>",
         }
@@ -203,7 +209,8 @@ impl Value {
             (Value::Bool(b1), Value::Bool(b2)) => b1 == b2,
             (Value::Number(num1), Value::Number(num2)) => num1 == num2,
             (Value::String(str1), Value::String(str2)) => str1 == str2,
-            (Value::Object(_), Value::Object(_)) => unimplemented!(),
+            (Value::Class(_), Value::Class(_)) => todo!(),
+            (Value::Instance(_), Value::Instance(_)) => todo!(),
             (Value::String(str1), Value::StringLiteral(str2)) => {
                 str1.as_str() == interner.resolve(*str2)
             }
@@ -224,7 +231,13 @@ impl Display for DisplayedValue<'_, '_> {
             Value::Bool(b) => write!(f, "{b}"),
             Value::Number(num) => write!(f, "{num}"),
             Value::String(str) => write!(f, "{}", str.as_str()),
-            Value::Object(_) => write!(f, "<object>"),
+            Value::Class(class) => write!(f, "<class {}>", interner.resolve(class.name)),
+            Value::Instance(instance) => write!(
+                f,
+                "<instance of:{} no:{}>",
+                interner.resolve(instance.class.name),
+                instance.id
+            ),
             Value::Function(func) => match func.deref() {
                 Function::UserDefined(func) => {
                     let name = interner.resolve(func.name);
@@ -251,7 +264,8 @@ impl Clone for Value {
             Value::Number(num) => Value::Number(*num),
             Value::Function(fun) => Value::Function(Rc::clone(fun)),
             Value::String(str) => Value::String(Rc::clone(str)),
-            Value::Object(obj) => Value::Object(Rc::clone(obj)),
+            Value::Class(class) => Value::Class(Rc::clone(class)),
+            Value::Instance(instance) => Value::Instance(Rc::clone(instance)),
             Value::StringLiteral(key) => Value::StringLiteral(*key),
         }
     }

@@ -7,15 +7,16 @@ use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::resolve::ResolveMap;
 use crate::util::{Location, TokLoc};
 
+use self::class::Class;
 use self::env::DynamicEnv;
 use self::function::{Native, UserDefined};
 use self::interner::{Interner, Key};
 use self::value::Value;
 
+pub mod class;
 pub mod env;
 pub mod function;
 pub mod interner;
-pub mod object;
 pub mod value;
 
 #[derive(Debug, Error)]
@@ -153,19 +154,14 @@ impl Interpreter {
                 }
                 Ok(Unwind::None)
             }
-            Stmt::Function {
-                name,
-                params,
-                body,
-                loc,
-            } => {
+            Stmt::Function { func } => {
                 self.dyn_env.define(
-                    *name,
+                    func.name,
                     Value::function(UserDefined::new(
-                        *name,
-                        params.clone(),
-                        body.clone(),
-                        *loc,
+                        func.name,
+                        func.params.clone(),
+                        func.body.clone(),
+                        func.loc,
                         self.dyn_env.current(),
                     )),
                 );
@@ -177,6 +173,12 @@ impl Interpreter {
                     None => Value::nil(),
                 };
                 Ok(Unwind::Return(value, *loc))
+            }
+            Stmt::Class { loc, name, methods } => {
+                // TODO: the author seems to handle this differently, revisit this in the future
+                let value = Value::class(Class::new(*name, methods.clone(), *loc));
+                self.dyn_env.define(*name, value);
+                Ok(Unwind::None)
             }
         }
     }
@@ -263,6 +265,10 @@ impl Interpreter {
                                 func.call(args, &self.dyn_env, |stmt| self.execute(stmt))
                             }
                         }
+                    }
+                    Value::Class(class) => {
+                        let instance = class.construct(Box::new([]));
+                        Ok(Value::instance(instance))
                     }
                     _ => Err(RuntimeError::NotCallable(*loc)),
                 }

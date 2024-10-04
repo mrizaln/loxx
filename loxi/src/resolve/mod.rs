@@ -99,14 +99,9 @@ impl Resolver {
                 self.resolve_expr(condition)?;
                 self.resolve_stmt(body)
             }
-            Stmt::Function {
-                name,
-                params,
-                body,
-                loc,
-            } => {
-                self.declare_and_define_var(*name, *loc)?;
-                self.resolve_function(params, body, *loc, Context::Function)
+            Stmt::Function { func } => {
+                self.declare_and_define_var(func.name, func.loc)?;
+                self.resolve_function(&func.params, &func.body, func.loc, Context::Function)
             }
             Stmt::Return { value, loc } => {
                 if let Context::None = self.context {
@@ -116,6 +111,14 @@ impl Resolver {
                     Some(value) => self.resolve_expr(value),
                     None => Ok(()),
                 }
+            }
+            Stmt::Class {
+                loc,
+                name,
+                methods: _,
+            } => {
+                self.declare_and_define_var(*name, *loc)
+                // NOTE: methods resolved separately
             }
         }
     }

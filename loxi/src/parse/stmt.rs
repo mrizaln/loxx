@@ -35,14 +35,16 @@ pub enum Stmt {
         body: Box<Stmt>,
     },
     Function {
-        name: Key,
-        params: Box<[Key]>,
-        body: Box<[Stmt]>,
-        loc: Location,
+        func: StmtFunction,
     },
     Return {
         loc: Location,
         value: Option<Box<Expr>>,
+    },
+    Class {
+        loc: Location,
+        name: Key,
+        methods: Box<[StmtFunction]>,
     },
 }
 
@@ -56,6 +58,14 @@ pub struct DisplayedStmt<'a, 'b> {
 pub enum Unwind {
     None,
     Return(Value, Location),
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct StmtFunction {
+    pub name: Key,
+    pub params: Box<[Key]>,
+    pub body: Box<[Stmt]>,
+    pub loc: Location,
 }
 
 impl Stmt {
@@ -116,15 +126,13 @@ impl Display for DisplayedStmt<'_, '_> {
                 let body = body.display(interner);
                 write!(f, "(while {condition} {body})")
             }
-            Stmt::Function {
-                name, params, body, ..
-            } => {
-                write!(f, "(fun {} (", interner.resolve(*name))?;
-                for param in params {
+            Stmt::Function { func, .. } => {
+                write!(f, "(fun {} (", interner.resolve(func.name))?;
+                for param in &func.params {
                     write!(f, " {}", interner.resolve(*param))?;
                 }
                 write!(f, ")")?;
-                for stmt in body {
+                for stmt in &func.body {
                     write!(f, " {}", stmt.display(interner))?;
                 }
                 write!(f, ")")
@@ -133,6 +141,22 @@ impl Display for DisplayedStmt<'_, '_> {
                 Some(val) => write!(f, "(return {})", val.display(interner)),
                 None => write!(f, "(return nil)"),
             },
+            Stmt::Class {
+                name, methods: _, ..
+            } => {
+                write!(f, "(class {})", interner.resolve(*name))
+            }
+        }
+    }
+}
+
+impl StmtFunction {
+    pub fn new(name: Key, params: Box<[Key]>, body: Box<[Stmt]>, loc: Location) -> Self {
+        Self {
+            name,
+            params,
+            body,
+            loc,
         }
     }
 }

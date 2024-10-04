@@ -2,11 +2,14 @@
 //!  ------------------------
 //! program     -> declaration* EOF ;
 //!
-//! declaration -> fun_decl
+//! declaration -> class_decl
+//!                 | fun_decl
 //!                 | var_decl
 //!                 | statement ;
 //!
-//! fun_dec     -> "fun" function ;
+//! class_decl  -> "class" IDENTIFIER "{" function* "}" ;
+//!
+//! fun_decl    -> "fun" function ;
 //!
 //! function    -> IDENTIFIER "(" parameters? ")" block ;
 //!
@@ -83,6 +86,8 @@ use expr::{Expr, RefExpr};
 use stmt::Stmt;
 
 use macros::{is_tok, missing_delim, peek_no_eof, syntax_error};
+
+use self::stmt::StmtFunction;
 
 pub mod expr;
 pub mod stmt;
@@ -235,6 +240,11 @@ impl Parser {
                 is_tok!(Keyword::Fun) => {
                     let loc = self.advance().unwrap().loc();
                     self.function_declaration(loc)
+                        .map(|func| Stmt::Function { func })
+                }
+                is_tok!(Keyword::Class) => {
+                    let loc = self.advance().unwrap().loc();
+                    self.class_declaration(loc)
                 }
                 _ => self.statement(),
             };
@@ -254,7 +264,32 @@ impl Parser {
         }
     }
 
-    fn function_declaration(&mut self, loc: Location) -> StmtResult {
+    fn class_declaration(&mut self, loc: Location) -> StmtResult {
+        let name = peek_no_eof! { self as ["<identifier>"]
+            if is_tok!(Literal::Identifier(str, _)) => *str,
+        }?;
+        self.advance();
+        peek_no_eof! { self as ["{"] if is_tok!(Punctuation::BraceLeft) => self.advance(), }?;
+
+        let mut methods = Vec::new();
+        loop {
+            match self.peek() {
+                Err(err) => Err(err.syntax_err("fun or }"))?,
+                Ok(is_tok!(Punctuation::BraceRight)) => break,
+                Ok(tok) => {
+                    let loc = tok.loc();
+                    methods.push(self.function_declaration(loc)?);
+                }
+            };
+        }
+
+        peek_no_eof! { self as ["}"] if is_tok!(Punctuation::BraceRight) => self.advance(), }?;
+
+        let methods = methods.into_boxed_slice();
+        Ok(Stmt::Class { loc, name, methods })
+    }
+
+    fn function_declaration(&mut self, loc: Location) -> Result<StmtFunction, ParseError> {
         let name = peek_no_eof! { self as ["<identifier>"]
             if is_tok!(Literal::Identifier(name, _)) => *name,
         }?;
@@ -318,18 +353,15 @@ impl Parser {
             _ => unreachable!(),
         };
 
-        Ok(Stmt::Function {
+        Ok(StmtFunction::new(
             name,
-            params: params.into_boxed_slice(),
+            params.into_boxed_slice(),
             body,
             loc,
-        })
+        ))
     }
 
     fn var_declaration(&mut self) -> StmtResult {
-        // TODO: add edge case check when the variable initializer has identifier with the same name
-        //       and make it a SyntaxError
-
         let (name, loc) = peek_no_eof! { self as ["<identifier>"]
             if is_tok!(Literal::Identifier(name, loc)) => (*name, *loc),
         }?;
