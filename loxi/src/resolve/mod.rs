@@ -1,9 +1,11 @@
 use std::fmt::Display;
+use std::mem;
 
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::interp::interner::Key;
+use crate::interp::interner::{Interner, Key};
+use crate::lex::token::Keyword;
 use crate::parse::expr::{ExprId, RefExpr, ValExpr};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
@@ -12,15 +14,22 @@ use self::scope::{Scope, ScopeError, VarBind};
 
 mod scope;
 
-pub struct Resolver {
+pub struct Resolver<'a> {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
-    context: Context, // track if we are in a function or not, acts like a stack
+    interner: &'a Interner,
+    func_context: FunctionContext, // track if we are in a function or not, acts like a stack
+    class_context: ClassContext,
 }
 
-enum Context {
+enum FunctionContext {
     Function,
     Method,
+    None,
+}
+
+enum ClassContext {
+    Class,
     None,
 }
 
@@ -34,6 +43,9 @@ pub enum ResolveError {
 
     #[error("{0} SyntaxError: Stray return statement outside of function")]
     StrayReturn(Location),
+
+    #[error("{0} SyntaxError: Stray this keyword outside of a class")]
+    StrayThis(Location),
 }
 
 #[derive(Default)]
@@ -41,12 +53,14 @@ pub struct ResolveMap {
     resolved_expr: FxHashMap<ExprId, usize>,
 }
 
-impl Resolver {
-    pub fn new() -> Resolver {
+impl Resolver<'_> {
+    pub fn new(interner: &Interner) -> Resolver {
         Resolver {
             scope: Scope::new_empty(),
             resolved_expr: FxHashMap::default(),
-            context: Context::None,
+            func_context: FunctionContext::None,
+            class_context: ClassContext::None,
+            interner,
         }
     }
 
@@ -102,10 +116,15 @@ impl Resolver {
             }
             Stmt::Function { func } => {
                 self.declare_and_define_var(func.name, func.loc)?;
-                self.resolve_function(&func.params, &func.body, func.loc, Context::Function)
+                self.resolve_function(
+                    &func.params,
+                    &func.body,
+                    func.loc,
+                    FunctionContext::Function,
+                )
             }
             Stmt::Return { value, loc } => {
-                if let Context::None = self.context {
+                if let FunctionContext::None = self.func_context {
                     Err(ResolveError::StrayReturn(*loc))?;
                 }
                 match value {
@@ -114,16 +133,24 @@ impl Resolver {
                 }
             }
             Stmt::Class { loc, name, methods } => {
+                let mut prev_context = mem::replace(&mut self.class_context, ClassContext::Class);
                 self.declare_and_define_var(*name, *loc)?;
-                // NOTE: methods resolved separately
+                self.scope.create_scope();
+
+                let this = self.interner.keyword(Keyword::This);
+                self.declare_and_define_var(this, *loc)?;
+
                 for method in methods.iter() {
                     self.resolve_function(
                         &method.params,
                         &method.body,
                         method.loc,
-                        Context::Method,
+                        FunctionContext::Method,
                     )?;
                 }
+
+                self.scope.drop_scope();
+                mem::swap(&mut self.class_context, &mut prev_context);
                 Ok(())
             }
         }
@@ -190,6 +217,13 @@ impl Resolver {
                 self.resolve_expr(value)?;
                 self.resolve_expr(object)
             }
+            RefExpr::This { loc } => match self.class_context {
+                ClassContext::None => Err(ResolveError::StrayThis(*loc)),
+                ClassContext::Class => {
+                    self.resolve_local(id, self.interner.get("this"), *loc);
+                    Ok(())
+                }
+            },
         }
     }
 
@@ -214,9 +248,9 @@ impl Resolver {
         params: &[Key],
         body: &[Stmt],
         loc: Location,
-        context: Context,
+        context: FunctionContext,
     ) -> Result<(), ResolveError> {
-        let mut prev_context = std::mem::replace(&mut self.context, context);
+        let mut prev_context = mem::replace(&mut self.func_context, context);
         self.scope.create_scope();
 
         for param in params.iter() {
@@ -227,7 +261,7 @@ impl Resolver {
         }
 
         self.scope.drop_scope();
-        std::mem::swap(&mut self.context, &mut prev_context);
+        mem::swap(&mut self.func_context, &mut prev_context);
 
         Ok(())
     }
@@ -268,6 +302,7 @@ impl ResolveError {
             ResolveError::VariableInInitializer(loc) => *loc,
             ResolveError::DuplicateDeclaration(loc, _) => *loc,
             ResolveError::StrayReturn(loc) => *loc,
+            ResolveError::StrayThis(loc) => *loc,
         }
     }
 }

@@ -103,7 +103,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     }
 
     // resolving
-    let mut resolver = Resolver::new();
+    let mut resolver = Resolver::new(interner);
     let resolve_map = resolver.resolve(&program).map_err(|err| {
         print_context(&lines, err.loc());
         println_red!("{}", err);

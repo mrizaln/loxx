@@ -3,11 +3,13 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
+use crate::lex::token::Keyword;
 use crate::parse::stmt::{Stmt, Unwind};
 use crate::util::Location;
 
+use super::class::Instance;
 use super::env::DynamicEnv;
-use super::interner::Key;
+use super::interner::{Interner, Key};
 use super::RuntimeError;
 use super::{env::Env, value::Value};
 
@@ -130,16 +132,40 @@ impl UserDefined {
 
         Ok(Value::nil())
     }
+
+    // NOTE: this function creates a copy of self that binds an instance into its new capture
+    pub fn bind(&self, instance: Rc<Instance>, interner: &Interner) -> UserDefined {
+        let new_capture = Env::new_with_parent(Rc::clone(&self.capture));
+        let this = interner.keyword(Keyword::This);
+        new_capture.define(this, Value::Instance(instance));
+        UserDefined::new(
+            self.name,
+            self.params.clone(),
+            self.body.clone(),
+            self.loc,
+            new_capture.into(),
+        )
+    }
 }
 
 impl PartialEq for UserDefined {
     fn eq(&self, other: &Self) -> bool {
         (self.name, self.arity(), self.loc) == (other.name, other.arity(), other.loc)
+            && Rc::ptr_eq(&self.capture, &other.capture)
     }
 }
 
 impl PartialOrd for UserDefined {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        (self.name, self.arity(), self.loc).partial_cmp(&(other.name, other.arity(), other.loc))
+        let lhs = (self.name, self.arity(), self.loc);
+        let rhs = (other.name, other.arity(), other.loc);
+
+        if lhs != rhs {
+            lhs.partial_cmp(&rhs)
+        } else {
+            let lhs = Rc::as_ptr(&self.capture) as usize;
+            let rhs = Rc::as_ptr(&other.capture) as usize;
+            lhs.partial_cmp(&rhs)
+        }
     }
 }

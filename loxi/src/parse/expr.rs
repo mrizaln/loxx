@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::token;
 use crate::interp::interner::Interner;
-use crate::util::{Location, TokLoc};
+use crate::util::{Location, LoxToken, TokLoc};
 
 use macros::*;
 
@@ -72,6 +72,9 @@ pub enum RefExpr {
         object: Box<Expr>,
         prop: TokLoc<token::DotProp>,
         value: Box<Expr>,
+    },
+    This {
+        loc: Location,
     },
 }
 
@@ -169,6 +172,10 @@ impl Expr {
             ExprId::new(),
         )
     }
+
+    pub fn this(loc: Location) -> Self {
+        Expr::RefExpr(RefExpr::This { loc }, ExprId::new())
+    }
 }
 
 impl PartialEq for Expr {
@@ -236,7 +243,7 @@ impl Display for DisplayedValExpr<'_, '_> {
                 write!(f, "{}", value.tok.display(interner))
             }
             ValExpr::Unary { operator, right } => {
-                let op: &str = (&operator.tok).into();
+                let op = operator.tok.as_str();
                 write!(f, "({op} {})", right.display(interner))
             }
             ValExpr::Binary {
@@ -244,10 +251,10 @@ impl Display for DisplayedValExpr<'_, '_> {
                 operator,
                 right,
             } => {
-                let op: &str = (&operator.tok).into();
                 write!(
                     f,
-                    "({op} {} {})",
+                    "({} {} {})",
+                    operator.tok.as_str(),
                     left.display(interner),
                     right.display(interner)
                 )
@@ -256,10 +263,10 @@ impl Display for DisplayedValExpr<'_, '_> {
                 write!(f, "(group {})", expr.display(interner))
             }
             ValExpr::Logical { left, kind, right } => {
-                let op: &str = (&kind.tok).into();
                 write!(
                     f,
-                    "({op} {} {})",
+                    "({} {} {})",
+                    kind.tok.as_str(),
                     left.display(interner),
                     right.display(interner)
                 )
@@ -300,6 +307,7 @@ impl Display for DisplayedRefExpr<'_, '_> {
                 object.display(interner),
                 value.display(interner)
             ),
+            RefExpr::This { .. } => write!(f, "(this)"),
         }
     }
 }

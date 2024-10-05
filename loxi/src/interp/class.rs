@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use crate::util::Location;
 
 use super::function::Function;
-use super::interner::Key;
+use super::interner::{Interner, Key};
 use super::value::Value;
 
 // TODO: create the actual object
@@ -60,12 +60,18 @@ impl PartialOrd for Class {
 }
 
 impl Instance {
-    pub fn get(&self, name: Key) -> Option<Property> {
+    pub fn get(self: &Rc<Instance>, name: Key, interner: &Interner) -> Option<Property> {
         if let Some(value) = self.fields.borrow().get(&name) {
             return Some(Property::Field(value.clone()));
         }
         if let Some(func) = self.class.methods.get(&name) {
-            return Some(Property::Method(Rc::clone(func)));
+            match func.as_ref() {
+                Function::UserDefined(func) => {
+                    let bound = Function::UserDefined(func.bind(Rc::clone(self), interner));
+                    return Some(Property::Method(Rc::new(bound)));
+                }
+                Function::Native(_) => panic!("native function should not be inside an instance!"),
+            }
         }
         None
     }

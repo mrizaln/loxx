@@ -1,9 +1,11 @@
 use std::fmt::{Debug, Display, Formatter};
 
-pub trait Token {}
+pub trait LoxToken {
+    fn as_str(&self) -> &'static str;
+}
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub struct TokLoc<T: Token> {
+pub struct TokLoc<T: LoxToken> {
     pub tok: T,
     pub loc: Location,
 }
@@ -15,7 +17,7 @@ pub struct Location {
     pub column: usize,
 }
 
-impl<T: Token> TokLoc<T> {
+impl<T: LoxToken> TokLoc<T> {
     pub fn new(tok: T, loc: Location) -> Self {
         Self { tok, loc }
     }

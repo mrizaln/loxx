@@ -1,7 +1,11 @@
 use std::fmt::Display;
 
+use strum::EnumIter;
+
 use crate::interp::interner::{Interner, Key};
-use crate::util::Token;
+use crate::util::LoxToken;
+
+use self::macros::impl_token;
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Punctuation {
@@ -30,7 +34,7 @@ pub enum Operator {
     Slash,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, EnumIter)]
 pub enum Keyword {
     True,
     False,
@@ -61,6 +65,8 @@ pub struct DisplayedLiteral<'a, 'b> {
     literal: &'a Literal,
     interner: &'b Interner,
 }
+
+impl_token!(Punctuation, Operator, Keyword, Literal);
 
 impl Literal {
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedLiteral<'a, 'b> {
@@ -206,6 +212,16 @@ impl TryFrom<&str> for Keyword {
     }
 }
 
+impl From<&Literal> for &str {
+    fn from(value: &Literal) -> Self {
+        match value {
+            Literal::String(_) => "<string>",
+            Literal::Identifier(_) => "<identifier>",
+            Literal::Number(_) => "<number>",
+        }
+    }
+}
+
 impl Display for DisplayedLiteral<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let interner = self.interner;
@@ -217,7 +233,18 @@ impl Display for DisplayedLiteral<'_, '_> {
     }
 }
 
-impl Token for Punctuation {}
-impl Token for Operator {}
-impl Token for Keyword {}
-impl Token for Literal {}
+mod macros {
+    macro_rules! impl_token {
+        ($($ty:ty),*) => {
+            $(
+                impl LoxToken for $ty {
+                    fn as_str(&self) -> &'static str {
+                        self.into()
+                    }
+                }
+            )*
+        };
+    }
+
+    pub(crate) use impl_token;
+}

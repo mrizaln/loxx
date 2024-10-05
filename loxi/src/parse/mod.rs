@@ -580,6 +580,9 @@ impl Parser {
                         RefExpr::Get { object, prop } => Ok(Expr::set(object, prop, value).boxed()),
                         RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
 
+                        // TODO: use better error message
+                        RefExpr::This { loc } => Err(syntax_error!("<lvalue>", "<this keyword>", loc)),
+
                         // RefExpr::Grouping should protect these cases
                         RefExpr::Assignment { .. } => unreachable!(),
                         RefExpr::Set { .. } => unreachable!(),
@@ -700,6 +703,7 @@ impl Parser {
             is_tok!(Keyword::True) => lit(Lit::True),
             is_tok!(Keyword::False) => lit(Lit::False),
             is_tok!(Keyword::Nil) => lit(Lit::Nil),
+            is_tok!(Keyword::This) => Expr::this(loc),
 
             is_tok!(Literal::String(str, _)) => lit(Lit::String(*str)),
             is_tok!(Literal::Number(num, _)) => lit(Lit::Number(*num)),

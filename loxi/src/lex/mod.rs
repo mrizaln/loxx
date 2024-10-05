@@ -6,7 +6,7 @@ use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
 
 use crate::interp::interner::{Interner, Key};
-use crate::util::{self, Location, TokLoc};
+use crate::util::{self, Location, LoxToken, TokLoc};
 use macros::tok;
 
 pub mod token;
@@ -44,11 +44,7 @@ impl Token {
             Token::Punctuation(TokLoc { tok, .. }) => tok.into(),
             Token::Operator(TokLoc { tok, .. }) => tok.into(),
             Token::Keyword(TokLoc { tok, .. }) => tok.into(),
-            Token::Literal(TokLoc { tok, .. }) => match tok {
-                token::Literal::String(_) => "<string>",
-                token::Literal::Identifier(_) => "<identifier>",
-                token::Literal::Number(_) => "<number>",
-            },
+            Token::Literal(TokLoc { tok, .. }) => tok.into(),
             Token::Eof(_) => "<eof>",
         }
     }
@@ -71,15 +67,15 @@ impl Display for DisplayedToken<'_, '_> {
                 write!(f, r#"{} Tok{{ "{}": "{}" }}"#, tokl.loc, name, value)
             }
             Token::Punctuation(tokl) => {
-                let name: &str = (&tokl.tok).into();
+                let name = tokl.tok.as_str();
                 write!(f, r#"{} Tok{{ "<punctuation>": "{}" }}"#, tokl.loc, name)
             }
             Token::Operator(tokl) => {
-                let name: &str = (&tokl.tok).into();
+                let name = tokl.tok.as_str();
                 write!(f, r#"{} Tok{{ "<operator>": "{}" }}"#, tokl.loc, name)
             }
             Token::Keyword(tokl) => {
-                let name: &str = (&tokl.tok).into();
+                let name = tokl.tok.as_str();
                 write!(f, r#"{} Tok{{ "<keyword>": "{}" }}"#, tokl.loc, name)
             }
             Token::Eof(loc) => {

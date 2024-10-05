@@ -60,7 +60,7 @@ fn get_reference_ast() -> Expr {
 #[test]
 fn print_expr_tree() {
     let expr = get_reference_ast();
-    let interner = Interner::new();
+    let interner = Interner::new_populate_with_keywords();
 
     // the tokens inside the AST should not need interner here, so an empty one suffice
 
@@ -72,7 +72,7 @@ fn print_expr_tree() {
 
 #[test]
 fn parse_to_a_correct_ast() {
-    let mut interner = Interner::new();
+    let mut interner = Interner::new_populate_with_keywords();
     let lexer = Lexer::new(EXPRESSION, &mut interner);
     let result = lexer.scan();
 

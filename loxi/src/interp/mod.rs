@@ -4,6 +4,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
+use crate::lex::token::Keyword;
 use crate::parse::expr::{Expr, ExprId, RefExpr, ValExpr};
 use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::resolve::ResolveMap;
@@ -69,7 +70,7 @@ impl Interpreter {
     pub fn new() -> Self {
         let mut interp = Interpreter {
             dyn_env: DynamicEnv::new_with_global(),
-            interner: Interner::new(),
+            interner: Interner::new_populate_with_keywords(),
             resolve_map: ResolveMap::default(),
         };
         interp.populate_env();
@@ -90,7 +91,7 @@ impl Interpreter {
             match self.execute(stmt)? {
                 Unwind::None => (),
                 Unwind::Return(_, _) => {
-                    panic!("stray return detection should be handled in Resolver")
+                    unreachable!("stray return detection should have been handled in Resolver!")
                 }
             }
         }
@@ -237,7 +238,7 @@ impl Interpreter {
                     value::InvalidOp::Unary(s) => {
                         RuntimeError::InvalidUnaryOp(operator.loc, operator.tok.clone(), s)
                     }
-                    _ => unreachable!(),
+                    _ => unreachable!("UnaryOp should only return Unary variant of InvalidOp"),
                 })
             }
             ValExpr::Binary {
@@ -264,7 +265,7 @@ impl Interpreter {
                     value::InvalidOp::Binary(l, r) => {
                         RuntimeError::InvalidBinaryOp(operator.loc, operator.tok.clone(), l, r)
                     }
-                    _ => unreachable!(),
+                    _ => unreachable!("BinaryOp should only return Binary variant of InvalidOp"),
                 })
             }
             ValExpr::Logical { left, kind, right } => {
@@ -323,7 +324,7 @@ impl Interpreter {
                 }
             }
             RefExpr::Get { object, prop } => match self.eval(object)? {
-                Value::Instance(instance) => match instance.get(prop.tok.name) {
+                Value::Instance(instance) => match instance.get(prop.tok.name, &self.interner) {
                     None => Err(RuntimeError::UndefinedProperty(prop.loc)),
                     Some(prop) => match prop {
                         Property::Field(value) => Ok(value),
@@ -344,6 +345,15 @@ impl Interpreter {
                 }
                 _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
             },
+            RefExpr::This { .. } => {
+                let this = self.interner.keyword(Keyword::This);
+                match self.lookup_var(id, this) {
+                    Some(value) => Ok(value),
+                    None => unreachable!(
+                        "stray this keyword detection should have been handled in Resolver!"
+                    ),
+                }
+            }
         }
     }
 

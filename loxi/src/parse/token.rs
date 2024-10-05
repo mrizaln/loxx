@@ -1,7 +1,9 @@
 use std::fmt::Display;
 
 use crate::interp::interner::{Interner, Key};
-use crate::util::Token;
+use crate::util::LoxToken;
+
+use self::macros::impl_token;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub enum Literal {
@@ -57,6 +59,8 @@ pub struct DisplayedVariable<'a, 'b> {
     variable: &'a Variable,
     interner: &'b Interner,
 }
+
+impl_token!(Literal, UnaryOp, BinaryOp, LogicalOp, Variable, DotProp);
 
 impl Literal {
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedLiteral<'a, 'b> {
@@ -129,31 +133,33 @@ impl From<&Variable> for &str {
     }
 }
 
+impl From<&DotProp> for &str {
+    fn from(_val: &DotProp) -> Self {
+        "."
+    }
+}
+
 impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: &str = self.into();
-        write!(f, "{str}")
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl Display for UnaryOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: &str = self.into();
-        write!(f, "{str}")
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl Display for BinaryOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: &str = self.into();
-        write!(f, "{str}")
+        write!(f, "{}", self.as_str())
     }
 }
 
 impl Display for LogicalOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str: &str = self.into();
-        write!(f, "{str}")
+        write!(f, "{}", self.as_str())
     }
 }
 
@@ -177,9 +183,18 @@ impl Display for DisplayedVariable<'_, '_> {
     }
 }
 
-impl Token for Literal {}
-impl Token for UnaryOp {}
-impl Token for BinaryOp {}
-impl Token for LogicalOp {}
-impl Token for Variable {}
-impl Token for DotProp {}
+mod macros {
+    macro_rules! impl_token {
+        ($($ty:ty),*) => {
+            $(
+                impl LoxToken for $ty {
+                    fn as_str(&self) -> &'static str {
+                        self.into()
+                    }
+                }
+            )*
+        };
+    }
+
+    pub(crate) use impl_token;
+}
