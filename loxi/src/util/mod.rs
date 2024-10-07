@@ -58,7 +58,7 @@ pub fn to_str<'a, const M: usize, const N: usize>(
     std::str::from_utf8(&buf[..pos]).expect("All chars is valid")
 }
 
-/// for debugging purposes
+/// raise a SIGTRAP signal (for debugging purposes)
 /// https://stackoverflow.com/a/78843608/16506263
 #[cfg(target_arch = "x86_64")]
 #[allow(unused)]

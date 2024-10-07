@@ -4,7 +4,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::lex::token::Keyword;
+use crate::lex::token::{Keyword, Special};
 use crate::parse::expr::{Expr, ExprId, RefExpr, ValExpr};
 use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::resolve::ResolveMap;
@@ -12,7 +12,7 @@ use crate::util::{Location, TokLoc};
 
 use self::class::{Class, Property};
 use self::env::DynamicEnv;
-use self::function::{Function, Native, UserDefined};
+use self::function::{Function, Kind, Native, UserDefined};
 use self::interner::{Interner, Key};
 use self::value::Value;
 
@@ -70,7 +70,7 @@ impl Interpreter {
     pub fn new() -> Self {
         let mut interp = Interpreter {
             dyn_env: DynamicEnv::new_with_global(),
-            interner: Interner::new_populate_with_keywords(),
+            interner: Interner::new(),
             resolve_map: ResolveMap::default(),
         };
         interp.populate_env();
@@ -174,6 +174,7 @@ impl Interpreter {
                         func.body.clone(),
                         func.loc,
                         self.dyn_env.current(),
+                        Kind::Function,
                     )),
                 );
                 Ok(Unwind::None)
@@ -189,21 +190,34 @@ impl Interpreter {
                 // // is this really necessary?
                 // self.dyn_env.define(*name, Value::Nil);
 
-                let methods = methods
-                    .iter()
-                    .map(|m| {
-                        let func = Function::UserDefined(UserDefined::new(
+                let mut methods_map = FxHashMap::default();
+                let mut constructor = None;
+
+                for m in methods.into_iter() {
+                    let func = |kind| {
+                        Rc::new(Function::UserDefined(UserDefined::new(
                             m.name,
                             m.params.clone(),
                             m.body.clone(),
                             m.loc,
                             self.dyn_env.current(),
-                        ));
-                        (m.name, Rc::new(func))
-                    })
-                    .collect::<FxHashMap<_, _>>();
+                            kind,
+                        )))
+                    };
 
-                let value = Value::class(Class::new(*name, methods, *loc));
+                    if m.name == self.interner.special(Special::Init) {
+                        match &constructor {
+                            None => constructor = Some(func(Kind::Constructor)),
+                            Some(_) => unreachable!(
+                                "duplicate declaration should have been handled in Resolver!"
+                            ),
+                        }
+                    } else {
+                        methods_map.insert(m.name, func(Kind::Function));
+                    }
+                }
+
+                let value = Value::class(Class::new(*name, constructor, methods_map, *loc));
                 self.dyn_env.define(*name, value);
 
                 Ok(Unwind::None)
@@ -286,17 +300,25 @@ impl Interpreter {
                             .into_iter()
                             .map(|a| self.eval(a))
                             .collect::<Result<Box<[_]>, _>>()?;
-
                         match func.deref() {
                             function::Function::Native(func) => func.call(args),
                             function::Function::UserDefined(func) => {
-                                func.call(args, &self.dyn_env, |stmt| self.execute(stmt))
+                                func.call(args, &self.interner, &self.dyn_env, |stmt| {
+                                    self.execute(stmt)
+                                })
                             }
                         }
                     }
                     Value::Class(class) => {
-                        let instance = class.construct(Box::new([]));
-                        Ok(Value::instance(instance))
+                        let args = args
+                            .into_iter()
+                            .map(|a| self.eval(a))
+                            .collect::<Result<Box<[_]>, _>>()?;
+                        let instance =
+                            class.construct(args, &self.interner, &self.dyn_env, *loc, |stmt| {
+                                self.execute(stmt)
+                            })?;
+                        Ok(Value::Instance(instance))
                     }
                     _ => Err(RuntimeError::NotCallable(*loc)),
                 }

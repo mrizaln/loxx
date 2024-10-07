@@ -66,6 +66,14 @@ pub struct DisplayedLiteral<'a, 'b> {
     interner: &'b Interner,
 }
 
+/// Not necessarily a token, just an identifier that has special meaning in certain context.
+/// I don't know where to place them, this module seems appropriate though.
+#[derive(EnumIter)]
+pub enum Special {
+    Init,
+    Super,
+}
+
 impl_token!(Punctuation, Operator, Keyword, Literal);
 
 impl Literal {
@@ -229,6 +237,15 @@ impl Display for DisplayedLiteral<'_, '_> {
             Literal::String(key) => write!(f, "{}", interner.resolve(*key)),
             Literal::Identifier(key) => write!(f, "{}", interner.resolve(*key)),
             Literal::Number(num) => write!(f, "{num}"),
+        }
+    }
+}
+
+impl Special {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Special::Init => "init",
+            Special::Super => "super",
         }
     }
 }

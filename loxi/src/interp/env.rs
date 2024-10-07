@@ -98,10 +98,7 @@ impl DynamicEnv {
     }
 
     pub fn bind_scope(&self, env: Rc<Env>) -> EnvBindGuard<'_> {
-        let previous = std::mem::replace(
-            &mut *self.current.borrow_mut(),
-            Rc::new(Env::new_with_parent(env)),
-        );
+        let previous = std::mem::replace(&mut *self.current.borrow_mut(), env);
         EnvBindGuard {
             env: self,
             previous,

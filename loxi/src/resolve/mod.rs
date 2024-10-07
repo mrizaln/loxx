@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::interp::interner::{Interner, Key};
-use crate::lex::token::Keyword;
+use crate::lex::token::{Keyword, Special};
 use crate::parse::expr::{ExprId, RefExpr, ValExpr};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
@@ -25,6 +25,7 @@ pub struct Resolver<'a> {
 enum FunctionContext {
     Function,
     Method,
+    Constructor,
     None,
 }
 
@@ -46,6 +47,9 @@ pub enum ResolveError {
 
     #[error("{0} SyntaxError: Stray this keyword outside of a class")]
     StrayThis(Location),
+
+    #[error("{0} SyntaxError: Can't return a value from initializer")]
+    FobiddenReturn(Location),
 }
 
 #[derive(Default)]
@@ -124,9 +128,14 @@ impl Resolver<'_> {
                 )
             }
             Stmt::Return { value, loc } => {
-                if let FunctionContext::None = self.func_context {
-                    Err(ResolveError::StrayReturn(*loc))?;
-                }
+                match self.func_context {
+                    FunctionContext::None => Err(ResolveError::StrayReturn(*loc))?,
+                    FunctionContext::Constructor => match value {
+                        Some(_) => Err(ResolveError::FobiddenReturn(*loc))?,
+                        None => (),
+                    },
+                    _ => (),
+                };
                 match value {
                     Some(value) => self.resolve_expr(value),
                     None => Ok(()),
@@ -141,12 +150,11 @@ impl Resolver<'_> {
                 self.declare_and_define_var(this, *loc)?;
 
                 for method in methods.iter() {
-                    self.resolve_function(
-                        &method.params,
-                        &method.body,
-                        method.loc,
-                        FunctionContext::Method,
-                    )?;
+                    let context = match method.name == self.interner.special(Special::Init) {
+                        true => FunctionContext::Constructor,
+                        false => FunctionContext::Method,
+                    };
+                    self.resolve_function(&method.params, &method.body, method.loc, context)?;
                 }
 
                 self.scope.drop_scope();
@@ -303,6 +311,7 @@ impl ResolveError {
             ResolveError::DuplicateDeclaration(loc, _) => *loc,
             ResolveError::StrayReturn(loc) => *loc,
             ResolveError::StrayThis(loc) => *loc,
+            ResolveError::FobiddenReturn(loc) => *loc,
         }
     }
 }

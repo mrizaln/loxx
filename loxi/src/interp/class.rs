@@ -4,16 +4,21 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
+use crate::lex::token::Special;
+use crate::parse::stmt::{Stmt, Unwind};
 use crate::util::Location;
 
-use super::function::Function;
+use super::env::DynamicEnv;
+use super::function::{Function, FunctionError};
 use super::interner::{Interner, Key};
 use super::value::Value;
+use super::RuntimeError;
 
 // TODO: create the actual object
 #[derive(Clone, Debug, PartialEq)]
 pub struct Class {
     pub name: Key,
+    pub constructor: Option<Rc<Function>>,
     pub methods: FxHashMap<Key, Rc<Function>>,
     pub loc: Location,
     counter: RefCell<usize>,
@@ -33,23 +38,60 @@ pub enum Property {
 }
 
 impl Class {
-    pub fn new(name: Key, methods: FxHashMap<Key, Rc<Function>>, loc: Location) -> Self {
+    pub fn new(
+        name: Key,
+        constructor: Option<Rc<Function>>,
+        methods: FxHashMap<Key, Rc<Function>>,
+        loc: Location,
+    ) -> Self {
         Self {
             name,
+            constructor,
             methods,
             loc,
             counter: 1.into(),
         }
     }
 
-    pub fn construct(self: &Rc<Self>, args: Box<[Value]>) -> Instance {
-        let id = *self.counter.borrow();
-        *self.counter.borrow_mut() += 1;
-        Instance {
-            id,
-            class: Rc::clone(self),
-            fields: FxHashMap::default().into(),
+    pub fn construct<F>(
+        self: &Rc<Self>,
+        args: Box<[Value]>,
+        interner: &Interner,
+        env: &DynamicEnv,
+        loc: Location,
+        exec: F,
+    ) -> Result<Rc<Instance>, RuntimeError>
+    where
+        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
+    {
+        let instance = Instance::new(self);
+
+        if self.constructor.is_none() {
+            return match args.len() {
+                0 => Ok(instance),
+                len => Err(FunctionError::MismatchedArgument {
+                    loc,
+                    expect: 0,
+                    got: len,
+                }
+                .into()),
+            };
         }
+
+        let ctor = self.constructor.as_ref().unwrap().as_user_defined();
+        let func = ctor.bind(Rc::clone(&instance), interner);
+        let value = func.call(args, interner, env, exec)?;
+
+        match value {
+            Value::Nil => (),
+            Value::Instance(ret) => match Rc::ptr_eq(&instance, &ret) {
+                true => (),
+                false => unreachable!("constructor can't return a different instance!"),
+            },
+            _ => unreachable!("constructor can only return the instance itself"),
+        }
+
+        Ok(instance)
     }
 }
 
@@ -60,10 +102,31 @@ impl PartialOrd for Class {
 }
 
 impl Instance {
+    fn new(class: &Rc<Class>) -> Rc<Self> {
+        let id = *class.counter.borrow();
+        *class.counter.borrow_mut() += 1;
+        Rc::new(Instance {
+            id,
+            class: Rc::clone(class),
+            fields: FxHashMap::default().into(),
+        })
+    }
+
     pub fn get(self: &Rc<Instance>, name: Key, interner: &Interner) -> Option<Property> {
         if let Some(value) = self.fields.borrow().get(&name) {
             return Some(Property::Field(value.clone()));
         }
+
+        // Accessing the constructor directly using `instance.init` expression.
+        // Apparently, this "reinitialize" any field that is touched by constructor while retaining
+        // other fields that is not... what a bizarre choice dear Robert Nystrom o_O.
+        // If I were him, I will disallow calling init or define a property named init.
+        if name == interner.special(Special::Init) && self.class.constructor.is_some() {
+            let ctor = self.class.constructor.as_ref().unwrap().as_user_defined();
+            let bound = Function::UserDefined(ctor.bind(Rc::clone(self), interner));
+            return Some(Property::Method(Rc::new(bound)));
+        }
+
         if let Some(func) = self.class.methods.get(&name) {
             match func.as_ref() {
                 Function::UserDefined(func) => {
@@ -73,6 +136,7 @@ impl Instance {
                 Function::Native(_) => panic!("native function should not be inside an instance!"),
             }
         }
+
         None
     }
 
