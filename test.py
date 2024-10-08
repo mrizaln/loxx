@@ -9,7 +9,12 @@ MIN_PYTHON = (3, 11)
 if sys.version_info < MIN_PYTHON:
     sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
 
-from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, RawTextHelpFormatter
+from argparse import (
+    ArgumentDefaultsHelpFormatter,
+    ArgumentParser,
+    Namespace,
+    RawTextHelpFormatter,
+)
 from collections.abc import Callable
 from contextlib import chdir
 from dataclasses import dataclass
@@ -258,7 +263,9 @@ class Test:
     def run_all(self) -> Result:
         tests = TESTS[self.interpreter.value.variant]
         benchmark = Cs.y(f"benchmark: {self.run_benchmark}")
-        printfl(f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})")
+        printfl(
+            f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})", end=""
+        )
 
         done_tests: Dict[Path, bool] = {}
 
@@ -299,12 +306,14 @@ class Test:
 
     def run_chapter(self, chapter: Chapter) -> Result:
         benchmark = Cs.y(f"benchmark: {self.run_benchmark}")
-        printfl(f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})")
+        printfl(
+            f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})", end=""
+        )
         suite = self._suite_from_chapter(chapter)
         result = Result()
 
         if suite is None:
-            printfl(f"Can't find suite for chapter {chapter}, probably wrong variant")
+            printfl(f"\nCan't find suite for chapter {chapter}, probably wrong variant")
             result.skipped = 1
             return result
 
@@ -571,7 +580,8 @@ def main() -> int:
         case (None, e):
             filter = Filter(re.compile(fnmatch.translate(e)), True)
 
-    clear_screen();
+    clear_screen()
+    print_args(args)
 
     # prepare the interpreters
     if not prepare_interpreters():
@@ -605,6 +615,18 @@ def main() -> int:
 # -----------------------------------------------------------------------------
 # test details
 # -----------------------------------------------------------------------------
+
+
+def print_args(args: Namespace):
+    printfl(">>> Arguments")
+    printfl(f"\t- Interpreter      : {args.interpreter}")
+    printfl(f"\t- Chapter          : {args.c}")
+    printfl(f"\t- Include benchmark: {args.b}")
+    printfl(f"\t- Verbose          : {args.v}")
+    printfl(f"\t- Timeout          : {args.t}")
+    printfl(f"\t- Filter           : {args.f}")
+    printfl(f"\t- Exclude          : {args.e}")
+    printfl()
 
 
 def clear_screen():
