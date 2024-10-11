@@ -7,7 +7,7 @@
 //!                 | var_decl
 //!                 | statement ;
 //!
-//! class_decl  -> "class" IDENTIFIER "{" function* "}" ;
+//! class_decl  -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" ;
 //!
 //! fun_decl    -> "fun" function ;
 //!
@@ -269,8 +269,25 @@ impl Parser {
             if is_tok!(Literal::Identifier(str, _)) => *str,
         }?;
         self.advance();
-        peek_no_eof! { self as ["{"] if is_tok!(Punctuation::BraceLeft) => self.advance(), }?;
 
+        let base = match self.peek() {
+            Ok(is_tok!(Operator::Less)) => {
+                let loc = self.advance().unwrap().loc();
+                let base = peek_no_eof! { self as ["<identifier>"]
+                    if is_tok!(Literal::Identifier(str, _)) => *str,
+                }?;
+                self.advance();
+                Ok(Some(Expr::variable(TokLoc::new(
+                    token::Variable { name: base },
+                    loc,
+                ))))
+            }
+            Ok(is_tok!(Punctuation::BraceLeft)) => Ok(None),
+            Ok(tok) => Err(syntax_error!("< or {", tok.static_str(), tok.loc())),
+            Err(err) => Err(err.syntax_err("< or {")),
+        }?;
+
+        peek_no_eof! { self as ["{"] if is_tok!(Punctuation::BraceLeft) => self.advance(), }?;
         let mut methods = Vec::new();
         loop {
             match self.peek() {
@@ -282,11 +299,14 @@ impl Parser {
                 }
             };
         }
-
         peek_no_eof! { self as ["}"] if is_tok!(Punctuation::BraceRight) => self.advance(), }?;
 
-        let methods = methods.into_boxed_slice();
-        Ok(Stmt::Class { loc, name, methods })
+        Ok(Stmt::Class {
+            loc,
+            name,
+            base,
+            methods: methods.into_boxed_slice(),
+        })
     }
 
     fn function_declaration(&mut self, loc: Location) -> Result<StmtFunction, ParseError> {
@@ -581,7 +601,9 @@ impl Parser {
                         RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
 
                         // TODO: use better error message
-                        RefExpr::This { loc } => Err(syntax_error!("<lvalue>", "<this keyword>", loc)),
+                        RefExpr::This { loc } => {
+                            Err(syntax_error!("<lvalue>", "<this keyword>", loc))
+                        }
 
                         // RefExpr::Grouping should protect these cases
                         RefExpr::Assignment { .. } => unreachable!(),

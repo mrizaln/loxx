@@ -44,6 +44,7 @@ pub enum Stmt {
     Class {
         loc: Location,
         name: Key,
+        base: Option<Expr>, // the only valid variant is RefExpr::Variable
         methods: Box<[StmtFunction]>,
     },
 }

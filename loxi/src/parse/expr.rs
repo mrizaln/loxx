@@ -102,13 +102,6 @@ impl Expr {
         Box::new(self)
     }
 
-    pub fn id(&self) -> ExprId {
-        match self {
-            Expr::ValExpr(_, id) => *id,
-            Expr::RefExpr(_, id) => *id,
-        }
-    }
-
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedExpr<'a, 'b> {
         DisplayedExpr {
             expr: self,

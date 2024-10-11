@@ -18,6 +18,7 @@ use super::RuntimeError;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Class {
     pub name: Key,
+    pub base: Option<Rc<Class>>,
     pub constructor: Option<Rc<Function>>,
     pub methods: FxHashMap<Key, Rc<Function>>,
     pub loc: Location,
@@ -40,12 +41,14 @@ pub enum Property {
 impl Class {
     pub fn new(
         name: Key,
+        base: Option<Rc<Class>>,
         constructor: Option<Rc<Function>>,
         methods: FxHashMap<Key, Rc<Function>>,
         loc: Location,
     ) -> Self {
         Self {
             name,
+            base,
             constructor,
             methods,
             loc,
@@ -93,6 +96,13 @@ impl Class {
 
         Ok(instance)
     }
+
+    pub fn find_method(&self, name: Key) -> Option<Rc<Function>> {
+        match self.methods.get(&name) {
+            Some(func) => Some(Rc::clone(func)),
+            None => self.base.as_ref().and_then(|b| b.find_method(name)),
+        }
+    }
 }
 
 impl PartialOrd for Class {
@@ -127,7 +137,7 @@ impl Instance {
             return Some(Property::Method(Rc::new(bound)));
         }
 
-        if let Some(func) = self.class.methods.get(&name) {
+        if let Some(func) = self.class.find_method(name) {
             match func.as_ref() {
                 Function::UserDefined(func) => {
                     let bound = Function::UserDefined(func.bind(Rc::clone(self), interner));

@@ -39,6 +39,9 @@ pub enum ResolveError {
     #[error("{0} SyntaxError: Variable is used in its own initializer")]
     VariableInInitializer(Location),
 
+    #[error("{0} SyntaxError: A class that inherits from itself doesn't make sense")]
+    ClassInheritItself(Location),
+
     #[error("{0} SyntaxError: Variable with the same name already defined at {1}")]
     DuplicateDeclaration(Location, Location),
 
@@ -141,11 +144,28 @@ impl Resolver<'_> {
                     None => Ok(()),
                 }
             }
-            Stmt::Class { loc, name, methods } => {
+            Stmt::Class {
+                loc,
+                name,
+                base,
+                methods,
+            } => {
                 let mut prev_context = mem::replace(&mut self.class_context, ClassContext::Class);
                 self.declare_and_define_var(*name, *loc)?;
-                self.scope.create_scope();
 
+                if let Some(expr) = base {
+                    match expr {
+                        Expr::RefExpr(RefExpr::Variable { var }, _) => {
+                            if var.tok.name == *name {
+                                Err(ResolveError::ClassInheritItself(var.loc))?;
+                            }
+                            self.resolve_expr(expr)?;
+                        }
+                        _ => unreachable!("base should be a RefExpr::Variable"),
+                    }
+                }
+
+                self.scope.create_scope();
                 let this = self.interner.keyword(Keyword::This);
                 self.declare_and_define_var(this, *loc)?;
 
@@ -156,8 +176,8 @@ impl Resolver<'_> {
                     };
                     self.resolve_function(&method.params, &method.body, method.loc, context)?;
                 }
-
                 self.scope.drop_scope();
+
                 mem::swap(&mut self.class_context, &mut prev_context);
                 Ok(())
             }
@@ -312,6 +332,7 @@ impl ResolveError {
             ResolveError::StrayReturn(loc) => *loc,
             ResolveError::StrayThis(loc) => *loc,
             ResolveError::FobiddenReturn(loc) => *loc,
+            ResolveError::ClassInheritItself(loc) => *loc,
         }
     }
 }

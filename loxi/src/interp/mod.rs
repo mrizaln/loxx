@@ -44,6 +44,9 @@ pub enum RuntimeError {
 
     #[error("{0} RuntimeError: Not a function or a callable object")]
     NotCallable(Location),
+
+    #[error("{0} RuntimeError: Inherit target must be a class")]
+    InheritNonClass(Location),
 }
 
 impl RuntimeError {
@@ -56,6 +59,7 @@ impl RuntimeError {
             RuntimeError::NotCallable(loc) => *loc,
             RuntimeError::InvalidPropertyAccess(loc) => *loc,
             RuntimeError::UndefinedProperty(loc) => *loc,
+            RuntimeError::InheritNonClass(loc) => *loc,
         }
     }
 }
@@ -186,9 +190,25 @@ impl Interpreter {
                 };
                 Ok(Unwind::Return(value, *loc))
             }
-            Stmt::Class { loc, name, methods } => {
-                // // is this really necessary?
-                // self.dyn_env.define(*name, Value::Nil);
+            Stmt::Class {
+                loc,
+                name,
+                base,
+                methods,
+            } => {
+                let base = match base {
+                    Some(expr) => match expr {
+                        Expr::RefExpr(RefExpr::Variable { var }, _) => match self.eval(expr)? {
+                            Value::Class(class) => Some(class),
+                            _ => Err(RuntimeError::InheritNonClass(var.loc))?,
+                        },
+                        _ => unreachable!("base should be a RefExpr::Variable"),
+                    },
+                    None => None,
+                };
+
+                // is this really necessary?
+                self.dyn_env.define(*name, Value::Nil);
 
                 let mut methods_map = FxHashMap::default();
                 let mut constructor = None;
@@ -217,8 +237,8 @@ impl Interpreter {
                     }
                 }
 
-                let value = Value::class(Class::new(*name, constructor, methods_map, *loc));
-                self.dyn_env.define(*name, value);
+                let value = Value::class(Class::new(*name, base, constructor, methods_map, *loc));
+                self.dyn_env.modify_at(*name, 0, |v| *v = value);
 
                 Ok(Unwind::None)
             }
