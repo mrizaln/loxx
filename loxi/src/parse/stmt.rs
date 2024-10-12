@@ -56,6 +56,11 @@ pub struct DisplayedStmt<'a, 'b> {
     interner: &'b Interner,
 }
 
+pub struct DisplayedStmtFunction<'a, 'b> {
+    func: &'a StmtFunction,
+    interner: &'b Interner,
+}
+
 pub enum Unwind {
     None,
     Return(Value, Location),
@@ -128,24 +133,18 @@ impl Display for DisplayedStmt<'_, '_> {
                 write!(f, "(while {condition} {body})")
             }
             Stmt::Function { func, .. } => {
-                write!(f, "(fun {} (", interner.resolve(func.name))?;
-                for param in &func.params {
-                    write!(f, " {}", interner.resolve(*param))?;
-                }
-                write!(f, ")")?;
-                for stmt in &func.body {
-                    write!(f, " {}", stmt.display(interner))?;
-                }
-                write!(f, ")")
+                write!(f, "{}", func.display(interner))
             }
             Stmt::Return { value, .. } => match value {
                 Some(val) => write!(f, "(return {})", val.display(interner)),
                 None => write!(f, "(return nil)"),
             },
-            Stmt::Class {
-                name, methods: _, ..
-            } => {
-                write!(f, "(class {})", interner.resolve(*name))
+            Stmt::Class { name, methods, .. } => {
+                write!(f, "(class {}", interner.resolve(*name))?;
+                for func in methods {
+                    write!(f, " {}", func.display(interner))?;
+                }
+                write!(f, ")")
             }
         }
     }
@@ -159,5 +158,29 @@ impl StmtFunction {
             body,
             loc,
         }
+    }
+
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedStmtFunction<'a, 'b> {
+        DisplayedStmtFunction {
+            func: self,
+            interner,
+        }
+    }
+}
+
+impl Display for DisplayedStmtFunction<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let interner = self.interner;
+        let func = self.func;
+
+        write!(f, "(fun {} (", interner.resolve(func.name))?;
+        for param in &func.params {
+            write!(f, " {}", interner.resolve(*param))?;
+        }
+        write!(f, ")")?;
+        for stmt in &func.body {
+            write!(f, " {}", stmt.display(interner))?;
+        }
+        write!(f, ")")
     }
 }

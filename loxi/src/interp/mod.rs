@@ -210,6 +210,18 @@ impl Interpreter {
                 // is this really necessary?
                 self.dyn_env.define(*name, Value::Nil);
 
+                let super_scope = match &base {
+                    Some(base) => {
+                        let guard = self.dyn_env.create_scope();
+                        self.dyn_env.define(
+                            self.interner.keyword(Keyword::Super),
+                            Value::Class(Rc::clone(base)),
+                        );
+                        Some(guard)
+                    }
+                    None => None,
+                };
+
                 let mut methods_map = FxHashMap::default();
                 let mut constructor = None;
 
@@ -236,6 +248,8 @@ impl Interpreter {
                         methods_map.insert(m.name, func(Kind::Function));
                     }
                 }
+
+                drop(super_scope);
 
                 let value = Value::class(Class::new(*name, base, constructor, methods_map, *loc));
                 self.dyn_env.modify_at(*name, 0, |v| *v = value);
@@ -394,6 +408,37 @@ impl Interpreter {
                     None => unreachable!(
                         "stray this keyword detection should have been handled in Resolver!"
                     ),
+                }
+            }
+            RefExpr::Super { prop } => {
+                let distance = match self.resolve_map.distance(id) {
+                    Some(dist) => dist,
+                    None => panic!("super should be inside resolve_map: {}", self.resolve_map),
+                };
+
+                let superr = self.interner.keyword(Keyword::Super);
+                let base = match self.dyn_env.get_at(superr, distance) {
+                    Some(Value::Class(class)) => class,
+                    _ => unreachable!("super should be available as class here "),
+                };
+
+                // NOTE: the layout of the Env makes sure "this" available below current scope
+                let this = self.interner.keyword(Keyword::This);
+                let instance = match self.dyn_env.get_at(this, distance - 1) {
+                    Some(Value::Instance(instance)) => instance,
+                    _ => unreachable!("this should be available as instance here"),
+                };
+
+                let find_func = |name: Key| match name {
+                    x if x == self.interner.special(Special::Init) => base.find_ctor(),
+                    _ => base.find_method(name),
+                };
+
+                match find_func(prop.tok.name) {
+                    None => Err(RuntimeError::UndefinedProperty(prop.loc)),
+                    Some(method) => Ok(Value::function(
+                        method.as_user_defined().bind(instance, &self.interner),
+                    )),
                 }
             }
         }

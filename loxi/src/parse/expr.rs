@@ -76,6 +76,9 @@ pub enum RefExpr {
     This {
         loc: Location,
     },
+    Super {
+        prop: TokLoc<token::DotProp>,
+    },
 }
 
 pub struct DisplayedExpr<'a, 'b> {
@@ -168,6 +171,10 @@ impl Expr {
 
     pub fn this(loc: Location) -> Self {
         Expr::RefExpr(RefExpr::This { loc }, ExprId::new())
+    }
+
+    pub fn superr(prop: TokLoc<token::DotProp>) -> Self {
+        Expr::RefExpr(RefExpr::Super { prop }, ExprId::new())
     }
 }
 
@@ -301,6 +308,9 @@ impl Display for DisplayedRefExpr<'_, '_> {
                 value.display(interner)
             ),
             RefExpr::This { .. } => write!(f, "(this)"),
+            RefExpr::Super { prop, .. } => {
+                write!(f, "(super {})", interner.resolve(prop.tok.name))
+            }
         }
     }
 }

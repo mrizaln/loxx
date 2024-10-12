@@ -70,7 +70,8 @@
 //!                 | "false"
 //!                 | "nil"
 //!                 | grouping
-//!                 | IDENTIFIER ;
+//!                 | IDENTIFIER
+//!                 | "super" "." IDENTIFIER ;
 //!
 //! grouping    -> "(" expression ")"
 
@@ -601,8 +602,11 @@ impl Parser {
                         RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
 
                         // TODO: use better error message
-                        RefExpr::This { loc } => {
+                        RefExpr::This { .. } => {
                             Err(syntax_error!("<lvalue>", "<this keyword>", loc))
+                        }
+                        RefExpr::Super { .. } => {
+                            Err(syntax_error!("<lvalue>", "<super keyword>", loc))
                         }
 
                         // RefExpr::Grouping should protect these cases
@@ -726,6 +730,16 @@ impl Parser {
             is_tok!(Keyword::False) => lit(Lit::False),
             is_tok!(Keyword::Nil) => lit(Lit::Nil),
             is_tok!(Keyword::This) => Expr::this(loc),
+            is_tok!(Keyword::Super) => {
+                let loc = peek_no_eof! { self as ["."]
+                    if is_tok!(Punctuation::Dot) => self.advance().unwrap().loc(),
+                }?;
+                let prop = peek_no_eof! { self as ["<identifier>"]
+                    if is_tok!(Literal::Identifier(name, _)) => token::DotProp { name: *name },
+                }?;
+                self.advance();
+                Expr::superr(TokLoc::new(prop, loc))
+            }
 
             is_tok!(Literal::String(str, _)) => lit(Lit::String(*str)),
             is_tok!(Literal::Number(num, _)) => lit(Lit::Number(*num)),

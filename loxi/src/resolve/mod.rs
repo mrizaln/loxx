@@ -31,6 +31,7 @@ enum FunctionContext {
 
 enum ClassContext {
     Class,
+    SubClass, // A class that inherits from another class
     None,
 }
 
@@ -48,8 +49,14 @@ pub enum ResolveError {
     #[error("{0} SyntaxError: Stray return statement outside of function")]
     StrayReturn(Location),
 
-    #[error("{0} SyntaxError: Stray this keyword outside of a class")]
+    #[error("{0} SyntaxError: Stray 'this' outside of a class")]
     StrayThis(Location),
+
+    #[error("{0} SyntaxError: Can't have a 'super' outside of a class")]
+    StraySuper(Location),
+
+    #[error("{0} SyntaxError: Can't have a 'super' inside a non-inheriting class")]
+    NonInheritingSuper(Location),
 
     #[error("{0} SyntaxError: Can't return a value from initializer")]
     FobiddenReturn(Location),
@@ -155,11 +162,17 @@ impl Resolver<'_> {
 
                 if let Some(expr) = base {
                     match expr {
-                        Expr::RefExpr(RefExpr::Variable { var }, _) => {
+                        Expr::RefExpr(RefExpr::Variable { var }, _id) => {
                             if var.tok.name == *name {
                                 Err(ResolveError::ClassInheritItself(var.loc))?;
                             }
+
+                            self.class_context = ClassContext::SubClass;
                             self.resolve_expr(expr)?;
+
+                            self.scope.create_scope();
+                            let superr = self.interner.keyword(Keyword::Super);
+                            self.declare_and_define_var(superr, var.loc)?;
                         }
                         _ => unreachable!("base should be a RefExpr::Variable"),
                     }
@@ -177,6 +190,10 @@ impl Resolver<'_> {
                     self.resolve_function(&method.params, &method.body, method.loc, context)?;
                 }
                 self.scope.drop_scope();
+
+                if base.is_some() {
+                    self.scope.drop_scope();
+                }
 
                 mem::swap(&mut self.class_context, &mut prev_context);
                 Ok(())
@@ -247,8 +264,17 @@ impl Resolver<'_> {
             }
             RefExpr::This { loc } => match self.class_context {
                 ClassContext::None => Err(ResolveError::StrayThis(*loc)),
-                ClassContext::Class => {
+                _ => {
                     self.resolve_local(id, self.interner.get("this"), *loc);
+                    Ok(())
+                }
+            },
+            RefExpr::Super { prop } => match self.class_context {
+                ClassContext::None => Err(ResolveError::StraySuper(prop.loc)),
+                ClassContext::Class => Err(ResolveError::NonInheritingSuper(prop.loc)),
+                _ => {
+                    let superr = self.interner.keyword(Keyword::Super);
+                    self.resolve_local(id, superr, prop.loc);
                     Ok(())
                 }
             },
@@ -333,6 +359,8 @@ impl ResolveError {
             ResolveError::StrayThis(loc) => *loc,
             ResolveError::FobiddenReturn(loc) => *loc,
             ResolveError::ClassInheritItself(loc) => *loc,
+            ResolveError::StraySuper(loc) => *loc,
+            ResolveError::NonInheritingSuper(loc) => *loc,
         }
     }
 }
@@ -349,7 +377,7 @@ impl ResolveMap {
 
 impl Display for ResolveMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "Resolved expressions:")?;
+        writeln!(f, "Resolved expressions {}:", self.resolved_expr.len())?;
         for (expr_id, distance) in self.resolved_expr.iter() {
             writeln!(f, "  {:?} -> {}", expr_id, distance)?;
         }

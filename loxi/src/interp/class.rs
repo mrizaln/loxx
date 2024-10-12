@@ -19,7 +19,7 @@ use super::RuntimeError;
 pub struct Class {
     pub name: Key,
     pub base: Option<Rc<Class>>,
-    pub constructor: Option<Rc<Function>>,
+    pub constructor: Option<Rc<Function>>, // constructor is not simply a method
     pub methods: FxHashMap<Key, Rc<Function>>,
     pub loc: Location,
     counter: RefCell<usize>,
@@ -69,19 +69,20 @@ impl Class {
     {
         let instance = Instance::new(self);
 
-        if self.constructor.is_none() {
-            return match args.len() {
-                0 => Ok(instance),
-                len => Err(FunctionError::MismatchedArgument {
-                    loc,
-                    expect: 0,
-                    got: len,
+        let ctor = match self.find_ctor() {
+            Some(ctor) => ctor.as_user_defined(),
+            None => match args.len() {
+                0 => return Ok(instance),
+                len => {
+                    return Err(Into::into(FunctionError::MismatchedArgument {
+                        loc,
+                        expect: 0,
+                        got: len,
+                    }))
                 }
-                .into()),
-            };
-        }
+            },
+        };
 
-        let ctor = self.constructor.as_ref().unwrap().as_user_defined();
         let func = ctor.bind(Rc::clone(&instance), interner);
         let value = func.call(args, interner, env, exec)?;
 
@@ -97,10 +98,19 @@ impl Class {
         Ok(instance)
     }
 
-    pub fn find_method(&self, name: Key) -> Option<Rc<Function>> {
+    /// Search for a method in the class and its base class (constructor is not included).
+    pub fn find_method(&self, name: Key) -> Option<&Function> {
         match self.methods.get(&name) {
-            Some(func) => Some(Rc::clone(func)),
+            Some(func) => Some(func),
             None => self.base.as_ref().and_then(|b| b.find_method(name)),
+        }
+    }
+
+    /// Search for a constructor in the class and its base class.
+    pub fn find_ctor(&self) -> Option<&Function> {
+        match &self.constructor {
+            Some(ctor) => Some(ctor.as_ref()),
+            None => self.base.as_ref().and_then(|b| b.find_ctor()),
         }
     }
 }
@@ -122,32 +132,30 @@ impl Instance {
         })
     }
 
-    pub fn get(self: &Rc<Instance>, name: Key, interner: &Interner) -> Option<Property> {
-        if let Some(value) = self.fields.borrow().get(&name) {
-            return Some(Property::Field(value.clone()));
-        }
+    pub fn get_method(self: &Rc<Instance>, name: Key, interner: &Interner) -> Option<Rc<Function>> {
+        let find_func = |name: Key| match name {
+            // Accessing the constructor directly using `instance.init` expression.
+            // Apparently, this "reinitialize" any field that is touched by constructor while retaining
+            // other fields that is not... what a bizarre choice dear Robert Nystrom o_O.
+            // If I were him, I will disallow calling init or define a property named init.
+            x if x == interner.special(Special::Init) => self.class.find_ctor(),
 
-        // Accessing the constructor directly using `instance.init` expression.
-        // Apparently, this "reinitialize" any field that is touched by constructor while retaining
-        // other fields that is not... what a bizarre choice dear Robert Nystrom o_O.
-        // If I were him, I will disallow calling init or define a property named init.
-        if name == interner.special(Special::Init) && self.class.constructor.is_some() {
-            let ctor = self.class.constructor.as_ref().unwrap().as_user_defined();
-            let bound = Function::UserDefined(ctor.bind(Rc::clone(self), interner));
-            return Some(Property::Method(Rc::new(bound)));
-        }
+            _ => self.class.find_method(name),
+        };
 
-        if let Some(func) = self.class.find_method(name) {
-            match func.as_ref() {
-                Function::UserDefined(func) => {
-                    let bound = Function::UserDefined(func.bind(Rc::clone(self), interner));
-                    return Some(Property::Method(Rc::new(bound)));
-                }
-                Function::Native(_) => panic!("native function should not be inside an instance!"),
+        find_func(name).map(|func| match func {
+            Function::Native(_) => panic!("native function should not be inside an instance!"),
+            Function::UserDefined(func) => {
+                Rc::new(Function::UserDefined(func.bind(Rc::clone(self), interner)))
             }
-        }
+        })
+    }
 
-        None
+    pub fn get(self: &Rc<Instance>, name: Key, interner: &Interner) -> Option<Property> {
+        match self.fields.borrow().get(&name) {
+            Some(value) => Some(Property::Field(value.clone())),
+            None => self.get_method(name, interner).map(Property::Method),
+        }
     }
 
     pub fn set(&self, name: Key, value: Value) {
