@@ -3,15 +3,13 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
-use crate::lex::token::Keyword;
 use crate::parse::stmt::{Stmt, Unwind};
 use crate::util::Location;
 
 use super::class::Instance;
-use super::env::DynamicEnv;
 use super::interner::{Interner, Key};
-use super::RuntimeError;
 use super::{env::Env, value::Value};
+use super::{Interpreter, RuntimeError};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub enum Kind {
@@ -52,18 +50,6 @@ pub enum FunctionError {
         expect: usize,
         got: usize,
     },
-}
-
-impl Function {
-    /// Access the inner `UserDefined` function. Panic if self is not a `UserDefined` function.
-    /// Useful to get back `UserDefined` fuction from `Function` for `UserDefined` function that
-    /// needs to be a `Function` because of design constraints.
-    pub fn as_user_defined(&self) -> &UserDefined {
-        match self {
-            Function::Native(_) => panic!("self is not a UserDefined function"),
-            Function::UserDefined(func) => func,
-        }
-    }
 }
 
 impl Native {
@@ -120,16 +106,11 @@ impl UserDefined {
         self.params.len()
     }
 
-    pub fn call<F>(
+    pub fn call(
         &self,
         args: Box<[Value]>,
-        interner: &Interner,
-        env: &DynamicEnv,
-        mut exec: F,
-    ) -> Result<Value, RuntimeError>
-    where
-        F: FnMut(&Stmt) -> Result<Unwind, RuntimeError>,
-    {
+        interpreter: &Interpreter,
+    ) -> Result<Value, RuntimeError> {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: self.loc,
@@ -139,6 +120,7 @@ impl UserDefined {
             .into());
         }
 
+        let (env, interner) = (&interpreter.dyn_env, &interpreter.interner);
         let _guard = env.bind_scope(Rc::new(Env::new_with_parent(Rc::clone(&self.capture))));
 
         // https://github.com/rust-lang/rust/issues/59878
@@ -147,7 +129,7 @@ impl UserDefined {
         }
 
         for stmt in self.body.iter() {
-            if let Unwind::Return(value, _) = exec(stmt)? {
+            if let Unwind::Return(value, _) = interpreter.execute(stmt)? {
                 match self.kind {
                     Kind::Function => return Ok(value),
                     Kind::Constructor => match value {
@@ -160,20 +142,16 @@ impl UserDefined {
 
         match self.kind {
             Kind::Function => Ok(Value::nil()),
-            Kind::Constructor => {
-                let this = interner.keyword(Keyword::This);
-                Ok(env
-                    .get_at(this, 0)
-                    .expect("this must exist if function is an initializer/constructor"))
-            }
+            Kind::Constructor => Ok(env
+                .get_at(interner.key_this, 0)
+                .expect("this must exist if function is an initializer/constructor")),
         }
     }
 
     // NOTE: this function creates a copy of self that binds an instance into its new capture
     pub fn bind(&self, instance: Rc<Instance>, interner: &Interner) -> UserDefined {
         let new_capture = Env::new_with_parent(Rc::clone(&self.capture));
-        let this = interner.keyword(Keyword::This);
-        new_capture.define(this, Value::Instance(instance));
+        new_capture.define(interner.key_this, Value::Instance(instance));
         UserDefined::new(
             self.name,
             self.params.clone(),

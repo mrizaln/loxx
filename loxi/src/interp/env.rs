@@ -118,9 +118,10 @@ impl DynamicEnv {
     }
 
     pub fn get_at(&self, key: Key, mut distance: usize) -> Option<Value> {
-        let mut current = Rc::clone(&self.current.borrow());
+        let current = self.current.borrow();
+        let mut current = current.as_ref();
         while distance > 0 {
-            current = Rc::clone(current.parent.as_ref()?);
+            current = current.parent.as_deref()?;
             distance -= 1;
         }
         current.get(key)
@@ -137,9 +138,10 @@ impl DynamicEnv {
     where
         F: FnOnce(&mut Value) -> R,
     {
-        let mut current = Rc::clone(&self.current.borrow());
+        let current = self.current.borrow();
+        let mut current = current.as_ref();
         while distance > 0 {
-            current = Rc::clone(current.parent.as_ref()?);
+            current = current.parent.as_deref()?;
             distance -= 1;
         }
         current.modify(key, f)

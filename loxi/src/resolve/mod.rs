@@ -3,9 +3,9 @@ use std::mem;
 
 use rustc_hash::FxHashMap;
 use thiserror::Error;
+use vec_map::VecMap;
 
 use crate::interp::interner::{Interner, Key};
-use crate::lex::token::{Keyword, Special};
 use crate::parse::expr::{ExprId, RefExpr, ValExpr};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
@@ -64,7 +64,7 @@ pub enum ResolveError {
 
 #[derive(Default)]
 pub struct ResolveMap {
-    resolved_expr: FxHashMap<ExprId, usize>,
+    resolved_expr: VecMap<usize>,
 }
 
 impl Resolver<'_> {
@@ -85,7 +85,12 @@ impl Resolver<'_> {
             self.resolve_stmt(stmt)?;
         }
         Ok(ResolveMap {
-            resolved_expr: self.resolved_expr.clone(),
+            resolved_expr: self
+                .resolved_expr
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k.inner(), v))
+                .collect(),
         })
     }
 
@@ -171,7 +176,7 @@ impl Resolver<'_> {
                             self.resolve_expr(expr)?;
 
                             self.scope.create_scope();
-                            let superr = self.interner.keyword(Keyword::Super);
+                            let superr = self.interner.key_super;
                             self.declare_and_define_var(superr, var.loc)?;
                         }
                         _ => unreachable!("base should be a RefExpr::Variable"),
@@ -179,11 +184,11 @@ impl Resolver<'_> {
                 }
 
                 self.scope.create_scope();
-                let this = self.interner.keyword(Keyword::This);
+                let this = self.interner.key_this;
                 self.declare_and_define_var(this, *loc)?;
 
                 for method in methods.iter() {
-                    let context = match method.name == self.interner.special(Special::Init) {
+                    let context = match method.name == self.interner.key_init {
                         true => FunctionContext::Constructor,
                         false => FunctionContext::Method,
                     };
@@ -273,7 +278,8 @@ impl Resolver<'_> {
                 ClassContext::None => Err(ResolveError::StraySuper(prop.loc)),
                 ClassContext::Class => Err(ResolveError::NonInheritingSuper(prop.loc)),
                 _ => {
-                    let superr = self.interner.keyword(Keyword::Super);
+                    // NOTE: prop are looked up dynamically
+                    let superr = self.interner.key_super;
                     self.resolve_local(id, superr, prop.loc);
                     Ok(())
                 }
@@ -367,11 +373,7 @@ impl ResolveError {
 
 impl ResolveMap {
     pub fn distance(&self, expr_id: ExprId) -> Option<usize> {
-        self.resolved_expr
-            .iter()
-            .find(|v| *v.0 == expr_id)
-            .map(|v| v.1)
-            .copied()
+        self.resolved_expr.get(expr_id.inner()).copied()
     }
 }
 

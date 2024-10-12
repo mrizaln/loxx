@@ -71,7 +71,6 @@ pub struct DisplayedLiteral<'a, 'b> {
 #[derive(EnumIter)]
 pub enum Special {
     Init,
-    Super,
 }
 
 impl_token!(Punctuation, Operator, Keyword, Literal);
@@ -245,7 +244,6 @@ impl Special {
     pub fn as_str(&self) -> &'static str {
         match self {
             Special::Init => "init",
-            Special::Super => "super",
         }
     }
 }

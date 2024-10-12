@@ -16,6 +16,7 @@ rustc-hash = "2.0.0"
 strum = { version = "0.26.3", features = ["derive"] }
 thiserror = "1.0.63"
 unicode-width = "0.1.13"
+vec_map = "0.8.2"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

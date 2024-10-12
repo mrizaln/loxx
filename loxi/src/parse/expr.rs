@@ -205,6 +205,10 @@ impl ExprId {
             id: COUNTER.fetch_add(1, Ordering::Relaxed),
         }
     }
+
+    pub fn inner(&self) -> usize {
+        self.id
+    }
 }
 
 impl ValExpr {

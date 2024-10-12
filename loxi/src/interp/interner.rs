@@ -9,12 +9,18 @@ pub type Key = Spur;
 #[derive(Debug)]
 pub struct Interner {
     rodeo: Rodeo,
+    pub key_this: Key,
+    pub key_super: Key,
+    pub key_init: Key,
 }
 
 impl Interner {
     pub fn new() -> Self {
         let mut interner = Self {
             rodeo: Rodeo::default(),
+            key_this: Key::default(),
+            key_super: Key::default(),
+            key_init: Key::default(),
         };
         for keyword in Keyword::iter() {
             interner.get_or_intern(keyword.as_str());
@@ -22,6 +28,9 @@ impl Interner {
         for special in Special::iter() {
             interner.get_or_intern(special.as_str());
         }
+        interner.key_this = interner.keyword(Keyword::This);
+        interner.key_super = interner.keyword(Keyword::Super);
+        interner.key_init = interner.special(Special::Init);
         interner
     }
 
@@ -49,11 +58,11 @@ impl Interner {
             .expect("the key should be interned beforehand")
     }
 
-    pub fn keyword(&self, keyword: Keyword) -> Key {
+    fn keyword(&self, keyword: Keyword) -> Key {
         self.get(keyword.as_str())
     }
 
-    pub fn special(&self, special: Special) -> Key {
+    fn special(&self, special: Special) -> Key {
         self.get(special.as_str())
     }
 }

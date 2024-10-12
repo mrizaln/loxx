@@ -1,10 +1,8 @@
-use std::ops::Deref;
 use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::lex::token::{Keyword, Special};
 use crate::parse::expr::{Expr, ExprId, RefExpr, ValExpr};
 use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::resolve::ResolveMap;
@@ -12,7 +10,7 @@ use crate::util::{Location, TokLoc};
 
 use self::class::{Class, Property};
 use self::env::DynamicEnv;
-use self::function::{Function, Kind, Native, UserDefined};
+use self::function::{Kind, Native, UserDefined};
 use self::interner::{Interner, Key};
 use self::value::Value;
 
@@ -213,10 +211,8 @@ impl Interpreter {
                 let super_scope = match &base {
                     Some(base) => {
                         let guard = self.dyn_env.create_scope();
-                        self.dyn_env.define(
-                            self.interner.keyword(Keyword::Super),
-                            Value::Class(Rc::clone(base)),
-                        );
+                        self.dyn_env
+                            .define(self.interner.key_super, Value::Class(Rc::clone(base)));
                         Some(guard)
                     }
                     None => None,
@@ -227,17 +223,17 @@ impl Interpreter {
 
                 for m in methods.into_iter() {
                     let func = |kind| {
-                        Rc::new(Function::UserDefined(UserDefined::new(
+                        UserDefined::new(
                             m.name,
                             m.params.clone(),
                             m.body.clone(),
                             m.loc,
                             self.dyn_env.current(),
                             kind,
-                        )))
+                        )
                     };
 
-                    if m.name == self.interner.special(Special::Init) {
+                    if m.name == self.interner.key_init {
                         match &constructor {
                             None => constructor = Some(func(Kind::Constructor)),
                             Some(_) => unreachable!(
@@ -319,11 +315,10 @@ impl Interpreter {
             ValExpr::Logical { left, kind, right } => {
                 let lhs = self.eval(left)?;
                 match (&kind.tok, lhs.truthiness()) {
-                    (token::LogicalOp::And, false) => return Ok(lhs),
-                    (token::LogicalOp::Or, true) => return Ok(lhs),
-                    (_, _) => (),
-                };
-                self.eval(right)
+                    (token::LogicalOp::And, false) => Ok(lhs),
+                    (token::LogicalOp::Or, true) => Ok(lhs),
+                    (_, _) => self.eval(right),
+                }
             }
             ValExpr::Call { callee, loc, args } => {
                 let callee = self.eval(callee)?;
@@ -334,13 +329,9 @@ impl Interpreter {
                             .into_iter()
                             .map(|a| self.eval(a))
                             .collect::<Result<Box<[_]>, _>>()?;
-                        match func.deref() {
+                        match func.as_ref() {
                             function::Function::Native(func) => func.call(args),
-                            function::Function::UserDefined(func) => {
-                                func.call(args, &self.interner, &self.dyn_env, |stmt| {
-                                    self.execute(stmt)
-                                })
-                            }
+                            function::Function::UserDefined(func) => func.call(args, self),
                         }
                     }
                     Value::Class(class) => {
@@ -348,10 +339,7 @@ impl Interpreter {
                             .into_iter()
                             .map(|a| self.eval(a))
                             .collect::<Result<Box<[_]>, _>>()?;
-                        let instance =
-                            class.construct(args, &self.interner, &self.dyn_env, *loc, |stmt| {
-                                self.execute(stmt)
-                            })?;
+                        let instance = class.construct(args, *loc, self)?;
                         Ok(Value::Instance(instance))
                     }
                     _ => Err(RuntimeError::NotCallable(*loc)),
@@ -384,7 +372,7 @@ impl Interpreter {
                     None => Err(RuntimeError::UndefinedProperty(prop.loc)),
                     Some(prop) => match prop {
                         Property::Field(value) => Ok(value),
-                        Property::Method(func) => Ok(Value::Function(func)),
+                        Property::Method(func) => Ok(Value::function(func)), // TODO: edit
                     },
                 },
                 _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
@@ -402,7 +390,7 @@ impl Interpreter {
                 _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
             },
             RefExpr::This { .. } => {
-                let this = self.interner.keyword(Keyword::This);
+                let this = self.interner.key_this;
                 match self.lookup_var(id, this) {
                     Some(value) => Ok(value),
                     None => unreachable!(
@@ -416,29 +404,27 @@ impl Interpreter {
                     None => panic!("super should be inside resolve_map: {}", self.resolve_map),
                 };
 
-                let superr = self.interner.keyword(Keyword::Super);
+                let superr = self.interner.key_super;
                 let base = match self.dyn_env.get_at(superr, distance) {
                     Some(Value::Class(class)) => class,
                     _ => unreachable!("super should be available as class here "),
                 };
 
                 // NOTE: the layout of the Env makes sure "this" available below current scope
-                let this = self.interner.keyword(Keyword::This);
+                let this = self.interner.key_this;
                 let instance = match self.dyn_env.get_at(this, distance - 1) {
                     Some(Value::Instance(instance)) => instance,
                     _ => unreachable!("this should be available as instance here"),
                 };
 
                 let find_func = |name: Key| match name {
-                    x if x == self.interner.special(Special::Init) => base.find_ctor(),
+                    x if x == self.interner.key_init => base.find_ctor(),
                     _ => base.find_method(name),
                 };
 
                 match find_func(prop.tok.name) {
                     None => Err(RuntimeError::UndefinedProperty(prop.loc)),
-                    Some(method) => Ok(Value::function(
-                        method.as_user_defined().bind(instance, &self.interner),
-                    )),
+                    Some(method) => Ok(Value::function(method.bind(instance, &self.interner))),
                 }
             }
         }
