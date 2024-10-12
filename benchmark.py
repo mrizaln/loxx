@@ -23,7 +23,6 @@ class Command:
 class Interpreter(Enum):
     LOXI = Command(["./target/release/loxi"])
     # LOXII = Command(["./target/release/loxii"])
-    JLOX = Command(["./reference/crafting-interpreters-code/jlox"])
 
 
 @dataclass
