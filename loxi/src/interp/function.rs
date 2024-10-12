@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
-use crate::parse::stmt::{Stmt, Unwind};
+use crate::parse::stmt::{StmtFunction, Unwind};
 use crate::util::Location;
 
 use super::class::Instance;
@@ -34,10 +34,7 @@ pub struct Native {
 
 #[derive(Clone, Debug)]
 pub struct UserDefined {
-    pub name: Key,
-    pub params: Box<[Key]>,
-    pub body: Box<[Stmt]>,
-    pub loc: Location,
+    pub func: Rc<StmtFunction>,
     pub capture: Rc<Env>,
     pub kind: Kind,
 }
@@ -84,26 +81,16 @@ impl FunctionError {
 }
 
 impl UserDefined {
-    pub fn new(
-        name: Key,
-        params: Box<[Key]>,
-        body: Box<[Stmt]>,
-        loc: Location,
-        capture: Rc<Env>,
-        kind: Kind,
-    ) -> Self {
+    pub fn new(func: Rc<StmtFunction>, capture: Rc<Env>, kind: Kind) -> Self {
         Self {
-            name,
-            params,
-            body,
-            loc,
+            func,
             capture,
             kind,
         }
     }
 
     pub fn arity(&self) -> usize {
-        self.params.len()
+        self.func.params.len()
     }
 
     pub fn call(
@@ -113,7 +100,7 @@ impl UserDefined {
     ) -> Result<Value, RuntimeError> {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
-                loc: self.loc,
+                loc: self.func.loc,
                 expect: self.arity(),
                 got: args.len(),
             }
@@ -125,10 +112,10 @@ impl UserDefined {
 
         // https://github.com/rust-lang/rust/issues/59878
         for (i, arg) in args.into_vec().into_iter().enumerate() {
-            env.define(self.params[i], arg);
+            env.define(self.func.params[i], arg);
         }
 
-        for stmt in self.body.iter() {
+        for stmt in self.func.body.iter() {
             if let Unwind::Return(value, _) = interpreter.execute(stmt)? {
                 match self.kind {
                     Kind::Function => return Ok(value),
@@ -152,28 +139,20 @@ impl UserDefined {
     pub fn bind(&self, instance: Rc<Instance>, interner: &Interner) -> UserDefined {
         let new_capture = Env::new_with_parent(Rc::clone(&self.capture));
         new_capture.define(interner.key_this, Value::Instance(instance));
-        UserDefined::new(
-            self.name,
-            self.params.clone(),
-            self.body.clone(),
-            self.loc,
-            new_capture.into(),
-            self.kind,
-        )
+        UserDefined::new(Rc::clone(&self.func), new_capture.into(), self.kind)
     }
 }
 
 impl PartialEq for UserDefined {
     fn eq(&self, other: &Self) -> bool {
-        (self.name, self.arity(), self.loc) == (other.name, other.arity(), other.loc)
-            && Rc::ptr_eq(&self.capture, &other.capture)
+        self.func == other.func && Rc::ptr_eq(&self.capture, &other.capture)
     }
 }
 
 impl PartialOrd for UserDefined {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        let lhs = (self.name, self.arity(), self.loc);
-        let rhs = (other.name, other.arity(), other.loc);
+        let lhs = &self.func;
+        let rhs = &other.func;
 
         if lhs != rhs {
             lhs.partial_cmp(&rhs)

@@ -98,18 +98,18 @@ impl Value {
         match (self, other) {
             (Value::Number(num1), Value::Number(num2)) => Ok(Value::number(num1 + num2)),
             (Value::String(str1), Value::String(str2)) => {
-                let mut new_str = str1.deref().clone();
-                new_str.push_str(str2.deref().as_str());
+                let mut new_str = str1.as_ref().clone();
+                new_str.push_str(str2.as_str());
                 Ok(Value::string(new_str))
             }
             (Value::String(str1), Value::StringLiteral(str2)) => {
-                let mut new_str = str1.deref().clone();
+                let mut new_str = str1.as_ref().clone();
                 let str2 = interner.resolve(str2);
                 new_str.push_str(str2);
                 Ok(Value::string(new_str))
             }
             (Value::StringLiteral(str1), Value::String(str2)) => {
-                let mut new_str = str2.deref().clone();
+                let mut new_str = str2.as_ref().clone();
                 let str1 = interner.resolve(str1);
                 new_str.insert_str(0, str1);
                 Ok(Value::string(new_str))
@@ -247,7 +247,7 @@ impl Display for DisplayedValue<'_, '_> {
             ),
             Value::Function(func) => match func.deref() {
                 Function::UserDefined(func) => {
-                    let name = interner.resolve(func.name);
+                    let name = interner.resolve(func.func.name);
                     write!(f, "<fun {name}>")
                 }
                 Function::Native(func) => {

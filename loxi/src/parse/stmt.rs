@@ -1,4 +1,5 @@
 use std::fmt::{Debug, Display};
+use std::rc::Rc;
 
 use crate::interp::interner::{Interner, Key};
 use crate::interp::value::Value;
@@ -35,7 +36,7 @@ pub enum Stmt {
         body: Box<Stmt>,
     },
     Function {
-        func: StmtFunction,
+        func: Rc<StmtFunction>,
     },
     Return {
         loc: Location,
@@ -45,7 +46,7 @@ pub enum Stmt {
         loc: Location,
         name: Key,
         base: Option<Expr>, // the only valid variant is RefExpr::Variable
-        methods: Box<[StmtFunction]>,
+        methods: Box<[Rc<StmtFunction>]>,
     },
 }
 

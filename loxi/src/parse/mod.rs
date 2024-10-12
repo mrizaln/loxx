@@ -77,6 +77,7 @@
 
 use std::collections::VecDeque;
 use std::fmt::Display;
+use std::rc::Rc;
 use thiserror::Error;
 
 use crate::interp::interner::{Interner, Key};
@@ -241,7 +242,7 @@ impl Parser {
                 is_tok!(Keyword::Fun) => {
                     let loc = self.advance().unwrap().loc();
                     self.function_declaration(loc)
-                        .map(|func| Stmt::Function { func })
+                        .map(|func| Stmt::Function { func: func.into() })
                 }
                 is_tok!(Keyword::Class) => {
                     let loc = self.advance().unwrap().loc();
@@ -296,7 +297,7 @@ impl Parser {
                 Ok(is_tok!(Punctuation::BraceRight)) => break,
                 Ok(tok) => {
                     let loc = tok.loc();
-                    methods.push(self.function_declaration(loc)?);
+                    methods.push(Rc::new(self.function_declaration(loc)?));
                 }
             };
         }

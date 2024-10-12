@@ -171,10 +171,7 @@ impl Interpreter {
                 self.dyn_env.define(
                     func.name,
                     Value::function(UserDefined::new(
-                        func.name,
-                        func.params.clone(),
-                        func.body.clone(),
-                        func.loc,
+                        Rc::clone(func),
                         self.dyn_env.current(),
                         Kind::Function,
                     )),
@@ -221,19 +218,11 @@ impl Interpreter {
                 let mut methods_map = FxHashMap::default();
                 let mut constructor = None;
 
-                for m in methods.into_iter() {
-                    let func = |kind| {
-                        UserDefined::new(
-                            m.name,
-                            m.params.clone(),
-                            m.body.clone(),
-                            m.loc,
-                            self.dyn_env.current(),
-                            kind,
-                        )
-                    };
+                for method in methods.into_iter() {
+                    let env = self.dyn_env.current();
+                    let func = |kind| UserDefined::new(Rc::clone(method), env, kind);
 
-                    if m.name == self.interner.key_init {
+                    if method.name == self.interner.key_init {
                         match &constructor {
                             None => constructor = Some(func(Kind::Constructor)),
                             Some(_) => unreachable!(
@@ -241,7 +230,7 @@ impl Interpreter {
                             ),
                         }
                     } else {
-                        methods_map.insert(m.name, func(Kind::Function));
+                        methods_map.insert(method.name, func(Kind::Function));
                     }
                 }
 
