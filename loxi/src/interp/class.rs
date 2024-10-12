@@ -11,7 +11,6 @@ use super::interner::{Interner, Key};
 use super::value::Value;
 use super::{Interpreter, RuntimeError};
 
-// TODO: create the actual object
 #[derive(Clone, Debug, PartialEq)]
 pub struct Class {
     pub name: Key,

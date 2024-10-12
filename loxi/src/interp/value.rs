@@ -209,12 +209,9 @@ impl Value {
             (Value::Bool(b1), Value::Bool(b2)) => b1 == b2,
             (Value::Number(num1), Value::Number(num2)) => num1 == num2,
             (Value::String(str1), Value::String(str2)) => str1 == str2,
-
-            // FIXME: not working as expected (failing: test/class/methods_equality.lox)
             (Value::Function(func1), Value::Function(func2)) => func1 == func2,
-
             (Value::Class(cls1), Value::Class(cls2)) => cls1 == cls2,
-            (Value::Instance(_), Value::Instance(_)) => todo!(),
+            (Value::Instance(ins1), Value::Instance(ins2)) => ins1 == ins2,
             (Value::String(str1), Value::StringLiteral(str2)) => {
                 str1.as_str() == interner.resolve(*str2)
             }

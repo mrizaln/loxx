@@ -71,7 +71,7 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         let mut interp = Interpreter {
-            dyn_env: DynamicEnv::new_with_global(),
+            dyn_env: DynamicEnv::with_global(),
             interner: Interner::new(),
             resolve_map: ResolveMap::default(),
         };
@@ -208,8 +208,8 @@ impl Interpreter {
                 let super_scope = match &base {
                     Some(base) => {
                         let guard = self.dyn_env.create_scope();
-                        self.dyn_env
-                            .define(self.interner.key_super, Value::Class(Rc::clone(base)));
+                        let superr = self.interner.key_super;
+                        self.dyn_env.define(superr, Value::Class(Rc::clone(base)));
                         Some(guard)
                     }
                     None => None,
@@ -361,7 +361,7 @@ impl Interpreter {
                     None => Err(RuntimeError::UndefinedProperty(prop.loc)),
                     Some(prop) => match prop {
                         Property::Field(value) => Ok(value),
-                        Property::Method(func) => Ok(Value::function(func)), // TODO: edit
+                        Property::Method(func) => Ok(Value::function(func)),
                     },
                 },
                 _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),

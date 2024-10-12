@@ -773,7 +773,7 @@ impl Parser {
         let mut expr = inner(self)?;
         while let Some(op) = curr(self.peek()?) {
             self.advance();
-            let right = inner(self).map_err(|e| e.syntax_err("<expression>"))?;
+            let right = inner(self)?;
             expr = Expr::binary(expr, op, right).boxed();
         }
         Ok(expr)
@@ -787,7 +787,7 @@ impl Parser {
         let mut expr = inner(self)?;
         while let Some(kind) = curr(self.peek()?) {
             self.advance();
-            let right = inner(self).map_err(|e| e.syntax_err("<expression>"))?;
+            let right = inner(self)?;
             expr = Expr::logical(expr, kind, right).boxed();
         }
         Ok(expr)

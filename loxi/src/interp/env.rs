@@ -30,14 +30,14 @@ pub struct EnvBindGuard<'a> {
 }
 
 impl Env {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             values: RefCell::new(FxHashMap::default()),
             parent: None,
         }
     }
 
-    pub fn new_with_parent(parent: Rc<Env>) -> Self {
+    pub fn with_parent(parent: Rc<Env>) -> Self {
         Self {
             values: RefCell::new(FxHashMap::default()),
             parent: Some(parent),
@@ -73,7 +73,7 @@ impl Env {
 }
 
 impl DynamicEnv {
-    pub fn new_with_global() -> Self {
+    pub fn with_global() -> Self {
         let env = Rc::new(Env::new());
         Self {
             current: Rc::clone(&env).into(),
@@ -87,7 +87,7 @@ impl DynamicEnv {
 
     pub fn create_scope(&self) -> EnvGuard<'_> {
         let parent = Rc::clone(&self.current.borrow());
-        let env = Rc::new(Env::new_with_parent(parent));
+        let env = Rc::new(Env::with_parent(parent));
         *self.current.borrow_mut() = env;
         EnvGuard { env: self }
     }

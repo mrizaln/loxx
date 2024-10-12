@@ -108,7 +108,7 @@ impl UserDefined {
         }
 
         let (env, interner) = (&interpreter.dyn_env, &interpreter.interner);
-        let _guard = env.bind_scope(Rc::new(Env::new_with_parent(Rc::clone(&self.capture))));
+        let _guard = env.bind_scope(Rc::new(Env::with_parent(Rc::clone(&self.capture))));
 
         // https://github.com/rust-lang/rust/issues/59878
         for (i, arg) in args.into_vec().into_iter().enumerate() {
@@ -137,7 +137,7 @@ impl UserDefined {
 
     // NOTE: this function creates a copy of self that binds an instance into its new capture
     pub fn bind(&self, instance: Rc<Instance>, interner: &Interner) -> UserDefined {
-        let new_capture = Env::new_with_parent(Rc::clone(&self.capture));
+        let new_capture = Env::with_parent(Rc::clone(&self.capture));
         new_capture.define(interner.key_this, Value::Instance(instance));
         UserDefined::new(Rc::clone(&self.func), new_capture.into(), self.kind)
     }
