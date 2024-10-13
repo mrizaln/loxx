@@ -36,10 +36,16 @@ class Result:
             raise ValueError("Cannot add results from different interpreters")
         return Result(self.interpreter, self.file, self.time + other.time)
 
+    def __truediv__(self, divisor: float) -> "Result":
+        if divisor == 0:
+            raise ValueError("Cannot divide by zero")
+        return Result(self.interpreter, self.file, self.time / divisor)
+
     def __str__(self) -> str:
         name = Cs.y(f"{self.interpreter.name.lower():>10}")
         time = Cs.g(f"{self.time:>10.6f}s")
-        return f"{name}: [{time}] {self.file}"
+        file = self.file.name
+        return f"{name}: [{time}] {file}"
 
 
 # colored strings
@@ -124,7 +130,7 @@ def run_benchmark(interpreter: Interpreter, repeat: int) -> List[Result]:
                     return results
                 case result:
                     result_acc += result
-        results.append(result_acc)
+        results.append(result_acc / repeat)
 
     return results
 
