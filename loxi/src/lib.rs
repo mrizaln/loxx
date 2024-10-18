@@ -9,12 +9,16 @@ use self::parse::Parser;
 use self::resolve::Resolver;
 use self::util::Location;
 
-mod interp;
-mod lex;
-mod parse;
-mod resolve;
-mod util;
+pub mod lex;
+pub mod parse;
+pub mod util;
 
+mod interp;
+mod resolve;
+
+pub use interp::interner;
+
+#[macro_export]
 macro_rules! println_red {
     ($fmt:literal, $($arg:tt)*) => {
         let str = format!($fmt, $($arg)*);
@@ -168,7 +172,7 @@ pub fn run_prompt() -> io::Result<()> {
 }
 
 #[rustfmt::skip]
-fn print_context(lines: &[&str], loc: Location) {
+pub fn print_context(lines: &[&str], loc: Location) {
     let line = match loc.line > lines.len() {
         true => "",
         false => lines[loc.line - 1],

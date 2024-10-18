@@ -198,6 +198,13 @@ dependencies = [
 [[package]]
 name = "loxii"
 version = "0.1.0"
+dependencies = [
+ "clap",
+ "coredump",
+ "loxi",
+ "pretty_assertions",
+ "thiserror",
+]
 
 [[package]]
 name = "once_cell"

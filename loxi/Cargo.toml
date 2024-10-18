@@ -8,15 +8,16 @@ edition = "2021"
 unicode = []
 
 [dependencies]
-clap = { version = "4.5.17", features = ["derive"] }
-coredump = "0.1.2"
+clap = { workspace = true }
+coredump = { workspace = true }
+thiserror = { workspace = true }
+
 indoc = "2.0.5"
 lasso = "0.7.3"
 rustc-hash = "2.0.0"
 strum = { version = "0.26.3", features = ["derive"] }
-thiserror = "1.0.63"
 unicode-width = "0.1.13"
 vec_map = "0.8.2"
 
 [dev-dependencies]
-pretty_assertions = "1.4.1"
+pretty_assertions.workspace = true
