@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+# ruff: noqa: E402
+
 # NOTE: This script is a python3 port of the test.dart script from
 #       https://github.com/munificent/craftinginterpreters
 
@@ -241,14 +243,10 @@ class Test:
         compile_error: List[Tuple[int, str]]
         runtime_error: Tuple[int, str] | None
 
-    # benchmark Filter, ignore mode
-    BENCHMARK_FILTER = Filter(re.compile(r".*benchmark.*"), True)
-
     def __init__(
         self,
         interpreter: Interpreter,
         filter_path: Filter | None,
-        run_benchmark: bool = False,
         print_output: bool = False,
         timeout_sec: float = -1.0,  # if timeout_ms is zero or less than zero, no timeout will be set
     ):
@@ -256,15 +254,13 @@ class Test:
         self.expectations: int = 0
         self.failures: Dict[Path, List[str]] = {}
         self.filter: Filter | None = filter_path
-        self.run_benchmark: bool = run_benchmark
         self.print_output: bool = print_output
         self.timeout_sec: float = timeout_sec
 
     def run_all(self) -> Result:
         tests = TESTS[self.interpreter.value.variant]
-        benchmark = Cs.y(f"benchmark: {self.run_benchmark}")
         printfl(
-            f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})", end=""
+            f"\n>>> Running {self.interpreter.value.name} tests", end=""
         )
 
         done_tests: Dict[Path, bool] = {}
@@ -274,7 +270,7 @@ class Test:
             printfl(f"\n- Testing Chapter {suite.chapter.name}")
             match suite.chapter:
                 case Chapter.SCANNING | Chapter.PARSING | Chapter.EVALUATING:
-                    printfl(f"\t- SKIPPED (can only be ran individually)")
+                    printfl("\t- SKIPPED (can only be ran individually)")
                     result.skipped += 1
                     continue
 
@@ -305,9 +301,8 @@ class Test:
         return result
 
     def run_chapter(self, chapter: Chapter) -> Result:
-        benchmark = Cs.y(f"benchmark: {self.run_benchmark}")
         printfl(
-            f"\n>>> Running {self.interpreter.value.name} tests ({benchmark})", end=""
+            f"\n>>> Running {self.interpreter.value.name} tests", end=""
         )
         suite = self._suite_from_chapter(chapter)
         result = Result()
@@ -336,7 +331,7 @@ class Test:
     def _run_test(self, test: Path) -> bool | None:
         expect = self._parse_test(test)
         if expect is None:
-            printfl(f"\t- 'test' is not a test file, skipping")
+            printfl("\t- 'test' is not a test file, skipping")
             return None
 
         def args(exe: Exe):
@@ -386,10 +381,6 @@ class Test:
             return False
 
     def _filter(self, path: Path) -> bool:
-        if not self.run_benchmark:
-            if not self.BENCHMARK_FILTER.match(path):
-                return False
-
         if self.filter is not None and not self.filter.match(path):
             return False
 
@@ -464,7 +455,8 @@ class Test:
         compile_error: List[Tuple[int, str]] = []
         runtime_error: Tuple[int, str] | None = None
 
-        to_var = lambda lang: Variant.TREE_WALK if lang == "java" else Variant.BYTECODE
+        def to_var(lang):
+            return Variant.TREE_WALK if lang == "java" else Variant.BYTECODE
 
         with open(test, "r") as file:
             for i, line in enumerate(file, 1):
@@ -515,18 +507,12 @@ def main() -> int:
 
     parser.add_argument(
         "interpreter",
-        help=f"Choose which version of the interpreter to run:\n- "
+        help="Choose which version of the interpreter to run:\n- "
         + "\n- ".join(interpreters),
         choices=interpreters,
         metavar="interpreter",
     )
 
-    parser.add_argument(
-        "-b",
-        help="Run the benchmarks as well",
-        action="store_true",
-        default=False,
-    )
     parser.add_argument(
         "-v",
         help="Print output regardless of the result",
@@ -567,7 +553,6 @@ def main() -> int:
 
     args = parser.parse_args()
     chapter = args.c
-    run_benchmark = args.b
     print_output = args.v
     timeout = args.t
 
@@ -599,11 +584,11 @@ def main() -> int:
     result = Result()
     if args.interpreter == "all":
         for interpreter in Interpreter:
-            test = Test(interpreter, filter, run_benchmark, print_output, timeout)
+            test = Test(interpreter, filter, print_output, timeout)
             result += run(test)
     else:
         interpreter = Interpreter[args.interpreter.upper()]
-        test = Test(interpreter, filter, run_benchmark, print_output, timeout)
+        test = Test(interpreter, filter, print_output, timeout)
         result = run(test)
 
     printfl("\n>>> Summary")
@@ -619,13 +604,12 @@ def main() -> int:
 
 def print_args(args: Namespace):
     printfl(">>> Arguments")
-    printfl(f"\t- Interpreter      : {args.interpreter}")
-    printfl(f"\t- Chapter          : {args.c}")
-    printfl(f"\t- Include benchmark: {args.b}")
-    printfl(f"\t- Verbose          : {args.v}")
-    printfl(f"\t- Timeout          : {args.t}")
-    printfl(f"\t- Filter           : {args.f}")
-    printfl(f"\t- Exclude          : {args.e}")
+    printfl(f"\t- Interpreter: {args.interpreter}")
+    printfl(f"\t- Chapter    : {args.c}")
+    printfl(f"\t- Verbose    : {args.v}")
+    printfl(f"\t- Timeout    : {args.t}")
+    printfl(f"\t- Filter     : {args.f}")
+    printfl(f"\t- Exclude    : {args.e}")
     printfl()
 
 
@@ -709,8 +693,13 @@ def populate_tests():
 
     for chapter in tree_walk:
         tests = TESTS[Variant.TREE_WALK]
-        add_pass = lambda x: tests.append(TestSuite.from_passes(chapter, x))
-        add_skip = lambda x: tests.append(TestSuite.from_skips(chapter, x))
+
+        def add_pass(x):
+            return tests.append(TestSuite.from_passes(chapter, x))
+
+        def add_skip(x):
+            return tests.append(TestSuite.from_skips(chapter, x))
+
         match chapter:
             case Chapter.SCANNING:
                 add_pass(["test/scanning"])  # No interpreter yet.
@@ -955,8 +944,13 @@ def populate_tests():
 
     for chapter in bytecode:
         tests = TESTS[Variant.BYTECODE]
-        add_skip = lambda x: tests.append(TestSuite.from_skips(chapter, x))
-        add_pass = lambda x: tests.append(TestSuite.from_passes(chapter, x))
+
+        def add_skip(x):
+            return tests.append(TestSuite.from_skips(chapter, x))
+
+        def add_pass(x):
+            return tests.append(TestSuite.from_passes(chapter, x))
+
         match chapter:
             case Chapter.COMPILING:
                 add_pass(["test/expressions/evaluate.lox"])  # No real interpreter yet.
