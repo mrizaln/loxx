@@ -7,10 +7,12 @@ from dataclasses import dataclass
 from enum import Enum
 from os import system
 from os.path import dirname, realpath
-from pathlib import Path
+from pathlib import Path, PurePath
 from subprocess import CalledProcessError, run
 from textwrap import indent
-from typing import Generator, List
+from typing import Any, Generator, List
+
+from tabulate import tabulate
 
 DIR = Path(dirname(realpath(__file__)))
 
@@ -25,27 +27,15 @@ class Interpreter(Enum):
     # LOXII = Command(["./target/release/loxii"])
 
 
-@dataclass
 class Result:
-    interpreter: Interpreter
-    file: Path
-    time: float
+    def __init__(self):
+        self.__inner: dict[PurePath, float] = dict()
 
-    def __add__(self, other: "Result") -> "Result":
-        if self.interpreter != other.interpreter:
-            raise ValueError("Cannot add results from different interpreters")
-        return Result(self.interpreter, self.file, self.time + other.time)
+    def get(self, key: PurePath) -> float | None:
+        return self.__inner.get(key)
 
-    def __truediv__(self, divisor: float) -> "Result":
-        if divisor == 0:
-            raise ValueError("Cannot divide by zero")
-        return Result(self.interpreter, self.file, self.time / divisor)
-
-    def __str__(self) -> str:
-        name = Cs.y(f"{self.interpreter.name.lower():>10}")
-        time = Cs.g(f"{self.time:>10.6f}s")
-        file = self.file.name
-        return f"{name}: [{time}] {file}"
+    def set(self, key: PurePath, value: float):
+        self.__inner[key] = value
 
 
 # colored strings
@@ -90,7 +80,7 @@ def benchmarks_file_generator() -> Generator[Path, None, None]:
             yield root / file
 
 
-def benchmark_file(interpreter: Interpreter, file: Path) -> Result | None:
+def benchmark_file(interpreter: Interpreter, file: PurePath) -> float | None:
     printfl(f"\t{Cs.y('> Running')} {interpreter.name.lower()} {file}")
     args = interpreter.value.args + [file]
 
@@ -115,24 +105,24 @@ def benchmark_file(interpreter: Interpreter, file: Path) -> Result | None:
             break
 
     time = float(lines[index + 1])
-    return Result(interpreter, file, time)
+    return time
 
 
-def run_benchmark(interpreter: Interpreter, repeat: int) -> List[Result]:
+def run_benchmark(interpreter: Interpreter, repeat: int) -> Result:
     printfl(f"\n{Cs.y('>>> Benchmarking')} {interpreter.name.lower()}")
     files = benchmarks_file_generator()
-    results = []
+
+    result = Result()
     for file in files:
-        result_acc = Result(interpreter, file, 0)
+        time_acc = 0.0
         for _ in range(repeat):
             match benchmark_file(interpreter, file):
                 case None:
-                    return results
-                case result:
-                    result_acc += result
-        results.append(result_acc / repeat)
-
-    return results
+                    return result
+                case time:
+                    time_acc += time
+        result.set(file, time_acc / repeat)
+    return result
 
 
 def clear_screen():
@@ -179,6 +169,23 @@ def prepare_interpreters() -> bool:
     return True
 
 
+def report(results: dict[Interpreter, Result]):
+    interpreters = results.keys()
+    headers = [""]
+    headers.extend((interp.name.lower() for interp in interpreters))
+
+    table = []
+    for file in benchmarks_file_generator():
+        row: List[Any] = [file.name]
+        for interp in interpreters:
+            result = results[interp]
+            row.append(result.get(file) or "-")
+        table.append(row)
+
+    printfl("\n>>> Results")
+    printfl(tabulate(table, headers=headers, tablefmt="github"))
+
+
 def main() -> int:
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
 
@@ -207,23 +214,19 @@ def main() -> int:
     print_args(args)
     prepare_interpreters()
 
-    def report(results: List[Result]):
-        for result in results:
-            printfl(result)
+    def interpreters():
+        if args.interpreter == "all":
+            for interpreter in Interpreter:
+                yield interpreter
+        else:
+            yield Interpreter[args.interpreter.upper()]
 
-    if args.interpreter == "all":
-        resultss: List[List[Result]] = []
-        for interpreter in Interpreter:
-            results = run_benchmark(interpreter, args.repeat)
-            resultss.append(results)
-        printfl("\n>>> Results")
-        for results in resultss:
-            report(results)
-            printfl()
-    else:
-        results = run_benchmark(Interpreter[args.interpreter.upper()], args.repeat)
-        printfl("\n>>> Results")
-        report(results)
+    results: dict[Interpreter, Result] = {}
+    for interpreter in interpreters():
+        result = run_benchmark(interpreter, args.repeat)
+        results[interpreter] = result
+
+    report(results)
 
     return 0
 
