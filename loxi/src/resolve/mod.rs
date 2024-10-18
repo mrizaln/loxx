@@ -6,7 +6,9 @@ use thiserror::Error;
 use vec_map::VecMap;
 
 use crate::interp::interner::{Interner, Key};
-use crate::parse::expr::{ExprId, RefExpr, ValExpr};
+use crate::parse::ast::Ast;
+use crate::parse::expr::{ExprId, ExprL, RefExpr, ValExpr};
+use crate::parse::stmt::{StmtFunctionL, StmtId, StmtL};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
 
@@ -14,12 +16,13 @@ use self::scope::{Scope, ScopeError, VarBind};
 
 mod scope;
 
-pub struct Resolver<'a> {
+pub struct Resolver<'a, 'b> {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
-    interner: &'a Interner,
     func_context: FunctionContext, // track if we are in a function or not, acts like a stack
     class_context: ClassContext,
+    interner: &'a Interner,
+    ast: &'b Ast,
 }
 
 enum FunctionContext {
@@ -67,14 +70,15 @@ pub struct ResolveMap {
     resolved_expr: VecMap<usize>,
 }
 
-impl Resolver<'_> {
-    pub fn new(interner: &Interner) -> Resolver {
+impl Resolver<'_, '_> {
+    pub fn new<'a, 'b>(interner: &'a Interner, ast: &'b Ast) -> Resolver<'a, 'b> {
         Resolver {
             scope: Scope::new_empty(),
             resolved_expr: FxHashMap::default(),
             func_context: FunctionContext::None,
             class_context: ClassContext::None,
             interner,
+            ast,
         }
     }
 
@@ -94,11 +98,12 @@ impl Resolver<'_> {
         })
     }
 
-    fn resolve_stmt(&mut self, stmt: &Stmt) -> Result<(), ResolveError> {
+    fn resolve_stmt(&mut self, stmt: &StmtId) -> Result<(), ResolveError> {
+        let StmtL { stmt, loc } = self.ast.get_stmt(stmt);
         match stmt {
             Stmt::Expr { expr } => self.resolve_expr(expr),
-            Stmt::Print { expr, .. } => self.resolve_expr(expr),
-            Stmt::Var { loc, name, init } => {
+            Stmt::Print { expr } => self.resolve_expr(expr),
+            Stmt::Var { name, init } => {
                 self.declare_var(*name, *loc)?;
                 if let Some(init) = init {
                     self.resolve_expr(init)?;
@@ -118,7 +123,6 @@ impl Resolver<'_> {
                 condition,
                 then,
                 otherwise,
-                ..
             } => {
                 self.resolve_expr(condition)?;
                 self.resolve_stmt(then)?;
@@ -127,22 +131,20 @@ impl Resolver<'_> {
                     _ => Ok(()),
                 }
             }
-            Stmt::While {
-                condition, body, ..
-            } => {
+            Stmt::While { condition, body } => {
                 self.resolve_expr(condition)?;
                 self.resolve_stmt(body)
             }
             Stmt::Function { func } => {
-                self.declare_and_define_var(func.name, func.loc)?;
-                self.resolve_function(
-                    &func.params,
-                    &func.body,
-                    func.loc,
-                    FunctionContext::Function,
-                )
+                let func = &self.ast.get_func(func).func;
+                self.declare_and_define_var(func.name, *loc)?;
+                let body = match &self.ast.get_stmt(&func.body).stmt {
+                    Stmt::Block { statements } => statements,
+                    _ => unreachable!("Shold be block"),
+                };
+                self.resolve_function(&func.params, &body, *loc, FunctionContext::Function)
             }
-            Stmt::Return { value, loc } => {
+            Stmt::Return { value } => {
                 match self.func_context {
                     FunctionContext::None => Err(ResolveError::StrayReturn(*loc))?,
                     FunctionContext::Constructor => match value {
@@ -157,7 +159,6 @@ impl Resolver<'_> {
                 }
             }
             Stmt::Class {
-                loc,
                 name,
                 base,
                 methods,
@@ -165,19 +166,20 @@ impl Resolver<'_> {
                 let mut prev_context = mem::replace(&mut self.class_context, ClassContext::Class);
                 self.declare_and_define_var(*name, *loc)?;
 
-                if let Some(expr) = base {
+                if let Some(expr_id) = base {
+                    let ExprL { expr, loc } = self.ast.get_expr(expr_id);
                     match expr {
-                        Expr::RefExpr(RefExpr::Variable { var }, _id) => {
-                            if var.tok.name == *name {
-                                Err(ResolveError::ClassInheritItself(var.loc))?;
+                        Expr::RefExpr(RefExpr::Variable { var }) => {
+                            if var.name == *name {
+                                Err(ResolveError::ClassInheritItself(*loc))?;
                             }
 
                             self.class_context = ClassContext::SubClass;
-                            self.resolve_expr(expr)?;
+                            self.resolve_expr(expr_id)?;
 
                             self.scope.create_scope();
                             let superr = self.interner.key_super;
-                            self.declare_and_define_var(superr, var.loc)?;
+                            self.declare_and_define_var(superr, *loc)?;
                         }
                         _ => unreachable!("base should be a RefExpr::Variable"),
                     }
@@ -188,11 +190,16 @@ impl Resolver<'_> {
                 self.declare_and_define_var(this, *loc)?;
 
                 for method in methods.iter() {
-                    let context = match method.name == self.interner.key_init {
+                    let StmtFunctionL { func, loc } = self.ast.get_func(method);
+                    let context = match func.name == self.interner.key_init {
                         true => FunctionContext::Constructor,
                         false => FunctionContext::Method,
                     };
-                    self.resolve_function(&method.params, &method.body, method.loc, context)?;
+                    let body = match &self.ast.get_stmt(&func.body).stmt {
+                        Stmt::Block { statements } => statements,
+                        _ => unreachable!("Shold be block"),
+                    };
+                    self.resolve_function(&func.params, body, *loc, context)?;
                 }
                 self.scope.drop_scope();
 
@@ -206,10 +213,11 @@ impl Resolver<'_> {
         }
     }
 
-    fn resolve_expr(&mut self, expr: &Expr) -> Result<(), ResolveError> {
+    fn resolve_expr(&mut self, expr_id: &ExprId) -> Result<(), ResolveError> {
+        let ExprL { expr, loc } = self.ast.get_expr(&expr_id);
         match expr {
-            Expr::ValExpr(expr, _id) => self.resolve_val_expr(expr),
-            Expr::RefExpr(expr, id) => self.resolve_ref_expr(expr, *id),
+            Expr::ValExpr(expr) => self.resolve_val_expr(expr),
+            Expr::RefExpr(expr) => self.resolve_ref_expr(expr, expr_id, *loc),
         }
     }
 
@@ -221,7 +229,7 @@ impl Resolver<'_> {
                 self.resolve_expr(left)?;
                 self.resolve_expr(right)
             }
-            ValExpr::Grouping { expr, .. } => self.resolve_val_expr(expr),
+            ValExpr::Grouping { expr, .. } => self.resolve_expr(expr),
             ValExpr::Logical { left, right, .. } => {
                 self.resolve_expr(left)?;
                 self.resolve_expr(right)
@@ -236,23 +244,27 @@ impl Resolver<'_> {
         }
     }
 
-    fn resolve_ref_expr(&mut self, expr: &RefExpr, id: ExprId) -> Result<(), ResolveError> {
+    fn resolve_ref_expr(
+        &mut self,
+        expr: &RefExpr,
+        id: &ExprId,
+        loc: Location,
+    ) -> Result<(), ResolveError> {
         match expr {
             RefExpr::Variable { var } => {
-                let name = var.tok.name;
+                let name = var.name;
                 if !self.scope.is_empty() {
                     if let Some(VarBind::Decl(loc)) = self.scope.get_current(name).as_deref() {
                         return Err(ResolveError::VariableInInitializer(*loc));
                     }
                 }
-                self.resolve_local(id, name, var.loc);
+                self.resolve_local(*id, name);
                 Ok(())
             }
-            RefExpr::Grouping { expr, .. } => self.resolve_ref_expr(expr, id),
+            RefExpr::Grouping { expr, .. } => self.resolve_expr(expr),
             RefExpr::Assignment { var, value } => {
-                let name = var.tok.name;
                 self.resolve_expr(value)?;
-                self.resolve_local(id, name, var.loc);
+                self.resolve_local(*id, var.name);
                 Ok(())
             }
             RefExpr::Get { object, prop: _ } => {
@@ -267,27 +279,27 @@ impl Resolver<'_> {
                 self.resolve_expr(value)?;
                 self.resolve_expr(object)
             }
-            RefExpr::This { loc } => match self.class_context {
-                ClassContext::None => Err(ResolveError::StrayThis(*loc)),
+            RefExpr::This => match self.class_context {
+                ClassContext::None => Err(ResolveError::StrayThis(loc)),
                 _ => {
-                    self.resolve_local(id, self.interner.get("this"), *loc);
+                    self.resolve_local(*id, self.interner.get("this"));
                     Ok(())
                 }
             },
-            RefExpr::Super { prop } => match self.class_context {
-                ClassContext::None => Err(ResolveError::StraySuper(prop.loc)),
-                ClassContext::Class => Err(ResolveError::NonInheritingSuper(prop.loc)),
+            RefExpr::Super { prop: _ } => match self.class_context {
+                ClassContext::None => Err(ResolveError::StraySuper(loc)),
+                ClassContext::Class => Err(ResolveError::NonInheritingSuper(loc)),
                 _ => {
                     // NOTE: prop are looked up dynamically
                     let superr = self.interner.key_super;
-                    self.resolve_local(id, superr, prop.loc);
+                    self.resolve_local(*id, superr);
                     Ok(())
                 }
             },
         }
     }
 
-    fn resolve_local(&mut self, expr_id: ExprId, name: Key, loc: Location) {
+    fn resolve_local(&mut self, expr_id: ExprId, name: Key) {
         if self.scope.is_empty() {
             return;
         }
@@ -306,7 +318,7 @@ impl Resolver<'_> {
     fn resolve_function(
         &mut self,
         params: &[Key],
-        body: &[Stmt],
+        body: &[StmtId],
         loc: Location,
         context: FunctionContext,
     ) -> Result<(), ResolveError> {

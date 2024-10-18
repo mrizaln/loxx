@@ -3,10 +3,12 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::parse::expr::{Expr, ExprId, RefExpr, ValExpr};
+use crate::parse::ast::Ast;
+use crate::parse::expr::{Expr, ExprId, ExprL, RefExpr, ValExpr};
+use crate::parse::stmt::{StmtFunctionL, StmtId, StmtL};
 use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
 use crate::resolve::ResolveMap;
-use crate::util::{Location, TokLoc};
+use crate::util::Location;
 
 use self::class::{Class, Property};
 use self::env::DynamicEnv;
@@ -66,6 +68,7 @@ pub struct Interpreter {
     dyn_env: DynamicEnv,
     interner: Interner,
     resolve_map: ResolveMap,
+    ast: Ast,
 }
 
 impl Interpreter {
@@ -74,13 +77,14 @@ impl Interpreter {
             dyn_env: DynamicEnv::with_global(),
             interner: Interner::new(),
             resolve_map: ResolveMap::default(),
+            ast: Ast::new(),
         };
         interp.populate_env();
         interp
     }
 
-    pub fn interner(&mut self) -> &mut Interner {
-        &mut self.interner
+    pub fn interner_and_ast(&mut self) -> (&mut Interner, &mut Ast) {
+        (&mut self.interner, &mut self.ast)
     }
 
     pub fn interpret(
@@ -106,7 +110,8 @@ impl Interpreter {
         self.dyn_env.define(name, Value::native_function(clock));
     }
 
-    fn execute(&self, stmt: &Stmt) -> Result<Unwind, RuntimeError> {
+    fn execute(&self, stmt: &StmtId) -> Result<Unwind, RuntimeError> {
+        let StmtL { stmt, loc } = self.ast.get_stmt(stmt);
         match stmt {
             Stmt::Expr { expr } => {
                 self.eval(expr)?;
@@ -114,7 +119,7 @@ impl Interpreter {
             }
             Stmt::Print { expr, .. } => {
                 let value = self.eval(expr)?;
-                println!("{}", value.display(&self.interner));
+                println!("{}", value.display(&self.interner, &self.ast));
                 Ok(Unwind::None)
             }
             Stmt::Var { name, init, .. } => {
@@ -167,18 +172,19 @@ impl Interpreter {
                 }
                 Ok(Unwind::None)
             }
-            Stmt::Function { func } => {
+            Stmt::Function { func: id } => {
+                let StmtFunctionL { func, .. } = self.ast.get_func(id);
                 self.dyn_env.define(
                     func.name,
                     Value::function(UserDefined::new(
-                        Rc::clone(func),
+                        *id,
                         self.dyn_env.current(),
                         Kind::Function,
                     )),
                 );
                 Ok(Unwind::None)
             }
-            Stmt::Return { value, loc } => {
+            Stmt::Return { value } => {
                 let value = match value {
                     Some(expr) => self.eval(expr)?,
                     None => Value::nil(),
@@ -186,19 +192,21 @@ impl Interpreter {
                 Ok(Unwind::Return(value, *loc))
             }
             Stmt::Class {
-                loc,
                 name,
                 base,
                 methods,
             } => {
                 let base = match base {
-                    Some(expr) => match expr {
-                        Expr::RefExpr(RefExpr::Variable { var }, _) => match self.eval(expr)? {
-                            Value::Class(class) => Some(class),
-                            _ => Err(RuntimeError::InheritNonClass(var.loc))?,
-                        },
-                        _ => unreachable!("base should be a RefExpr::Variable"),
-                    },
+                    Some(expr_id) => {
+                        let ExprL { expr, loc } = self.ast.get_expr(expr_id);
+                        match expr {
+                            Expr::RefExpr(RefExpr::Variable { .. }) => match self.eval(expr_id)? {
+                                Value::Class(class) => Some(class),
+                                _ => Err(RuntimeError::InheritNonClass(*loc))?,
+                            },
+                            _ => unreachable!("base should be a RefExpr::Variable"),
+                        }
+                    }
                     None => None,
                 };
 
@@ -220,17 +228,18 @@ impl Interpreter {
 
                 for method in methods.into_iter() {
                     let env = self.dyn_env.current();
-                    let func = |kind| UserDefined::new(Rc::clone(method), env, kind);
+                    let create_func = |kind| UserDefined::new(*method, env, kind);
 
-                    if method.name == self.interner.key_init {
+                    let StmtFunctionL { func, .. } = self.ast.get_func(method);
+                    if func.name == self.interner.key_init {
                         match &constructor {
-                            None => constructor = Some(func(Kind::Constructor)),
+                            None => constructor = Some(create_func(Kind::Constructor)),
                             Some(_) => unreachable!(
                                 "duplicate declaration should have been handled in Resolver!"
                             ),
                         }
                     } else {
-                        methods_map.insert(method.name, func(Kind::Function));
+                        methods_map.insert(func.name, create_func(Kind::Function));
                     }
                 }
 
@@ -244,32 +253,33 @@ impl Interpreter {
         }
     }
 
-    pub fn eval(&self, expr: &Expr) -> Result<Value, RuntimeError> {
+    pub fn eval(&self, expr_id: &ExprId) -> Result<Value, RuntimeError> {
+        let ExprL { expr, loc } = self.ast.get_expr(expr_id);
         match expr {
-            Expr::ValExpr(expr, _id) => self.eval_val(expr),
-            Expr::RefExpr(expr, id) => self.eval_ref(expr, *id),
+            Expr::ValExpr(expr) => self.eval_val(expr, *loc),
+            Expr::RefExpr(expr) => self.eval_ref(expr, *expr_id, *loc),
         }
     }
 
-    fn eval_val(&self, expr: &ValExpr) -> Result<Value, RuntimeError> {
+    fn eval_val(&self, expr: &ValExpr, loc: Location) -> Result<Value, RuntimeError> {
         match expr {
-            ValExpr::Literal { value } => match &value.tok {
+            ValExpr::Literal { value } => match value {
                 token::Literal::Number(num) => Ok(Value::number(*num)),
                 token::Literal::String(str) => Ok(Value::string_literal(*str)),
                 token::Literal::True => Ok(Value::bool(true)),
                 token::Literal::False => Ok(Value::bool(false)),
                 token::Literal::Nil => Ok(Value::nil()),
             },
-            ValExpr::Grouping { expr, .. } => self.eval_val(expr),
+            ValExpr::Grouping { expr, .. } => self.eval(expr),
             ValExpr::Unary { operator, right } => {
                 let value = self.eval(right)?;
-                match operator.tok {
+                match operator {
                     token::UnaryOp::Minus => value.minus(),
                     token::UnaryOp::Not => Ok(value.not()),
                 }
                 .map_err(|err| match err {
                     value::InvalidOp::Unary(s) => {
-                        RuntimeError::InvalidUnaryOp(operator.loc, operator.tok.clone(), s)
+                        RuntimeError::InvalidUnaryOp(loc, operator.clone(), s)
                     }
                     _ => unreachable!("UnaryOp should only return Unary variant of InvalidOp"),
                 })
@@ -282,7 +292,7 @@ impl Interpreter {
                 let lhs = self.eval(left)?;
                 let rhs = self.eval(right)?;
 
-                match operator.tok {
+                match operator {
                     token::BinaryOp::Add => lhs.add(rhs, &self.interner),
                     token::BinaryOp::Sub => lhs.sub(rhs),
                     token::BinaryOp::Mul => lhs.mul(rhs),
@@ -296,20 +306,20 @@ impl Interpreter {
                 }
                 .map_err(|err| match err {
                     value::InvalidOp::Binary(l, r) => {
-                        RuntimeError::InvalidBinaryOp(operator.loc, operator.tok.clone(), l, r)
+                        RuntimeError::InvalidBinaryOp(loc, operator.clone(), l, r)
                     }
                     _ => unreachable!("BinaryOp should only return Binary variant of InvalidOp"),
                 })
             }
             ValExpr::Logical { left, kind, right } => {
                 let lhs = self.eval(left)?;
-                match (&kind.tok, lhs.truthiness()) {
+                match (&kind, lhs.truthiness()) {
                     (token::LogicalOp::And, false) => Ok(lhs),
                     (token::LogicalOp::Or, true) => Ok(lhs),
                     (_, _) => self.eval(right),
                 }
             }
-            ValExpr::Call { callee, loc, args } => {
+            ValExpr::Call { callee, args } => {
                 let callee = self.eval(callee)?;
 
                 match callee {
@@ -328,43 +338,41 @@ impl Interpreter {
                             .into_iter()
                             .map(|a| self.eval(a))
                             .collect::<Result<Box<[_]>, _>>()?;
-                        let instance = class.construct(args, *loc, self)?;
+                        let instance = class.construct(args, loc, self)?;
                         Ok(Value::Instance(instance))
                     }
-                    _ => Err(RuntimeError::NotCallable(*loc)),
+                    _ => Err(RuntimeError::NotCallable(loc)),
                 }
             }
         }
     }
 
-    fn eval_ref(&self, expr: &RefExpr, id: ExprId) -> Result<Value, RuntimeError> {
+    fn eval_ref(&self, expr: &RefExpr, id: ExprId, loc: Location) -> Result<Value, RuntimeError> {
         match expr {
-            RefExpr::Variable {
-                var: TokLoc { tok, loc },
-            } => self.lookup_var(id, tok.name).ok_or_else(|| {
-                let var_name = self.interner.resolve(tok.name);
-                RuntimeError::UndefinedVariable(*loc, var_name.to_string())
+            RefExpr::Variable { var } => self.lookup_var(id, var.name).ok_or_else(|| {
+                let var_name = self.interner.resolve(var.name);
+                RuntimeError::UndefinedVariable(loc, var_name.to_string())
             }),
-            RefExpr::Grouping { expr, .. } => self.eval_ref(expr, id),
+            RefExpr::Grouping { expr, .. } => self.eval(expr),
             RefExpr::Assignment { var, value } => {
                 let value = self.eval(value)?;
-                match self.modify_var(id, var.tok.name, |v| *v = value) {
-                    Some(_) => Ok(self.lookup_var(id, var.tok.name).unwrap()),
+                match self.modify_var(id, var.name, |v| *v = value) {
+                    Some(_) => Ok(self.lookup_var(id, var.name).unwrap()),
                     None => Err(RuntimeError::UndefinedVariable(
-                        var.loc,
-                        self.interner.resolve(var.tok.name).to_owned(),
+                        loc,
+                        self.interner.resolve(var.name).to_owned(),
                     )),
                 }
             }
             RefExpr::Get { object, prop } => match self.eval(object)? {
-                Value::Instance(instance) => match instance.get(prop.tok.name, &self.interner) {
-                    None => Err(RuntimeError::UndefinedProperty(prop.loc)),
+                Value::Instance(instance) => match instance.get(prop.name, &self.interner) {
+                    None => Err(RuntimeError::UndefinedProperty(loc)),
                     Some(prop) => match prop {
                         Property::Field(value) => Ok(value),
                         Property::Method(func) => Ok(Value::function(func)),
                     },
                 },
-                _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
+                _ => Err(RuntimeError::InvalidPropertyAccess(loc)),
             },
             RefExpr::Set {
                 object,
@@ -373,12 +381,12 @@ impl Interpreter {
             } => match self.eval(object)? {
                 Value::Instance(instance) => {
                     let value = self.eval(value)?;
-                    instance.set(prop.tok.name, value.clone());
+                    instance.set(prop.name, value.clone());
                     Ok(value)
                 }
-                _ => Err(RuntimeError::InvalidPropertyAccess(prop.loc)),
+                _ => Err(RuntimeError::InvalidPropertyAccess(loc)),
             },
-            RefExpr::This { .. } => {
+            RefExpr::This => {
                 let this = self.interner.key_this;
                 match self.lookup_var(id, this) {
                     Some(value) => Ok(value),
@@ -411,8 +419,8 @@ impl Interpreter {
                     _ => base.find_method(name),
                 };
 
-                match find_func(prop.tok.name) {
-                    None => Err(RuntimeError::UndefinedProperty(prop.loc)),
+                match find_func(prop.name) {
+                    None => Err(RuntimeError::UndefinedProperty(loc)),
                     Some(method) => Ok(Value::function(method.bind(instance, &self.interner))),
                 }
             }
@@ -434,6 +442,12 @@ impl Interpreter {
             Some(distance) => self.dyn_env.modify_at(key, distance, f),
             None => self.dyn_env.modify_global(key, f),
         }
+    }
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
