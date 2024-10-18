@@ -56,7 +56,7 @@ pub enum RunMode {
 
 pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     let mut interpreter = Interpreter::new();
-    let interner = interpreter.interner();
+    let (interner, ast) = interpreter.interner_and_ast();
 
     // lexing
     let lexer = Lexer::new(program, interner);
@@ -92,7 +92,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     }
 
     // parsing
-    let mut parser = Parser::new();
+    let mut parser = Parser::new(ast);
     let program = parser.parse(tokens).map_err(|err| {
         err.iter().for_each(|e| {
             print_context(&lines, e.loc());
@@ -102,12 +102,12 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     })?;
 
     if mode == RunMode::DumpParse {
-        println!("{}", program.display(interner));
+        print!("{}", program.display(interner, ast));
         return Ok(());
     }
 
     // resolving
-    let mut resolver = Resolver::new(interner);
+    let mut resolver = Resolver::new(interner, ast);
     let resolve_map = resolver.resolve(&program).map_err(|err| {
         print_context(&lines, err.loc());
         println_red!("{}", err);

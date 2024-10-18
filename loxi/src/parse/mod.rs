@@ -77,7 +77,6 @@
 
 use std::collections::VecDeque;
 use std::fmt::Display;
-use std::rc::Rc;
 use thiserror::Error;
 
 use crate::interp::interner::{Interner, Key};
@@ -89,8 +88,11 @@ use stmt::Stmt;
 
 use macros::{is_tok, missing_delim, peek_no_eof, syntax_error};
 
-use self::stmt::StmtFunction;
+use self::ast::Ast;
+use self::expr::ExprId;
+use self::stmt::{StmtFunction, StmtFunctionId, StmtId};
 
+pub mod ast;
 pub mod expr;
 pub mod stmt;
 pub mod token;
@@ -165,46 +167,47 @@ impl ParseError {
     }
 }
 
-pub struct Parser {
+pub struct Parser<'a> {
     tokens: VecDeque<lex::Token>,
     errors: Vec<SyntaxError>,
     current: Option<lex::Token>,
+    ast: &'a mut Ast,
 }
 
 pub struct Program {
-    pub statements: Vec<Stmt>,
+    pub statements: Vec<StmtId>,
 }
 
-pub struct DisplayedProgram<'a, 'b> {
+pub struct DisplayedProgram<'a, 'b, 'c> {
     program: &'a Program,
     interner: &'b Interner,
+    ast: &'c Ast,
 }
 
-pub type ExprResult = Result<Box<Expr>, ParseError>;
-pub type StmtResult = Result<Stmt, ParseError>;
+pub type ExprResult = Result<ExprId, ParseError>;
+pub type StmtResult = Result<StmtId, ParseError>;
 
-impl Parser {
-    pub fn new() -> Self {
-        Self {
+impl Parser<'_> {
+    pub fn new(ast: &mut Ast) -> Parser {
+        Parser {
             tokens: VecDeque::new(),
             errors: Vec::new(),
             current: None,
+            ast,
         }
     }
 
     pub fn parse(&mut self, tokens: Vec<lex::Token>) -> Result<Program, Vec<SyntaxError>> {
         self.tokens = VecDeque::from(tokens);
 
-        let mut program = Program {
-            statements: Vec::new(),
-        };
+        let mut statements = Vec::new();
 
         while let Some(stmt) = self.declaration() {
-            program.statements.push(stmt);
+            statements.push(stmt);
         }
 
         if self.errors.is_empty() {
-            Ok(program)
+            Ok(Program { statements })
         } else {
             Err(std::mem::take(&mut self.errors))
         }
@@ -232,7 +235,7 @@ impl Parser {
     }
 
     /// this function only returns Err when it reaches EOF
-    fn declaration(&mut self) -> Option<Stmt> {
+    fn declaration(&mut self) -> Option<StmtId> {
         if let Ok(tok) = self.peek() {
             let stmt = match tok {
                 is_tok!(Keyword::Var) => {
@@ -242,7 +245,7 @@ impl Parser {
                 is_tok!(Keyword::Fun) => {
                     let loc = self.advance().unwrap().loc();
                     self.function_declaration(loc)
-                        .map(|func| Stmt::Function { func: func.into() })
+                        .map(|fun| self.ast.add_stmt(Stmt::function(fun), loc))
                 }
                 is_tok!(Keyword::Class) => {
                     let loc = self.advance().unwrap().loc();
@@ -279,10 +282,8 @@ impl Parser {
                     if is_tok!(Literal::Identifier(str, _)) => *str,
                 }?;
                 self.advance();
-                Ok(Some(Expr::variable(TokLoc::new(
-                    token::Variable { name: base },
-                    loc,
-                ))))
+                let variable = Expr::variable(token::Variable { name: base });
+                Ok(Some(self.ast.add_expr(variable, loc)))
             }
             Ok(is_tok!(Punctuation::BraceLeft)) => Ok(None),
             Ok(tok) => Err(syntax_error!("< or {", tok.static_str(), tok.loc())),
@@ -297,21 +298,18 @@ impl Parser {
                 Ok(is_tok!(Punctuation::BraceRight)) => break,
                 Ok(tok) => {
                     let loc = tok.loc();
-                    methods.push(Rc::new(self.function_declaration(loc)?));
+                    let method = self.function_declaration(loc)?;
+                    methods.push(method);
                 }
             };
         }
         peek_no_eof! { self as ["}"] if is_tok!(Punctuation::BraceRight) => self.advance(), }?;
 
-        Ok(Stmt::Class {
-            loc,
-            name,
-            base,
-            methods: methods.into_boxed_slice(),
-        })
+        let class = Stmt::class(name, base, methods.into_boxed_slice());
+        Ok(self.ast.add_stmt(class, loc))
     }
 
-    fn function_declaration(&mut self, loc: Location) -> Result<StmtFunction, ParseError> {
+    fn function_declaration(&mut self, loc: Location) -> Result<StmtFunctionId, ParseError> {
         let name = peek_no_eof! { self as ["<identifier>"]
             if is_tok!(Literal::Identifier(name, _)) => *name,
         }?;
@@ -370,17 +368,8 @@ impl Parser {
             },
         }?;
 
-        let body = match body {
-            Stmt::Block { statements } => statements.into_boxed_slice(),
-            _ => unreachable!(),
-        };
-
-        Ok(StmtFunction::new(
-            name,
-            params.into_boxed_slice(),
-            body,
-            loc,
-        ))
+        let fun = StmtFunction::new(name, params.into_boxed_slice(), body);
+        Ok(self.ast.add_func(fun, loc))
     }
 
     fn var_declaration(&mut self) -> StmtResult {
@@ -404,7 +393,8 @@ impl Parser {
             if is_tok!(Punctuation::Semicolon) => self.advance(),
         }?;
 
-        Ok(Stmt::Var { loc, name, init })
+        let stmt = Stmt::var(name, init);
+        Ok(self.ast.add_stmt(stmt, loc))
     }
 
     fn statement(&mut self) -> StmtResult {
@@ -438,11 +428,13 @@ impl Parser {
     }
 
     fn print_statement(&mut self, loc: Location) -> StmtResult {
-        let expr = match self.expression_statement()? {
-            Stmt::Expr { expr } => expr,
+        let stmt = self.expression_statement()?;
+        let expr = match &self.ast.get_stmt(&stmt).stmt {
+            Stmt::Expr { expr } => *expr,
             _ => panic!("Should be expr"),
         };
-        Ok(Stmt::Print { loc, expr })
+        let stmt = Stmt::print(expr);
+        Ok(self.ast.add_stmt(stmt, loc))
     }
 
     fn while_statement(&mut self, loc: Location) -> StmtResult {
@@ -451,11 +443,8 @@ impl Parser {
         peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
         let body = self.statement()?;
 
-        Ok(Stmt::While {
-            loc,
-            condition,
-            body: body.boxed(),
-        })
+        let stmt = Stmt::while_(condition, body);
+        Ok(self.ast.add_stmt(stmt, loc))
     }
 
     fn for_statement(&mut self, loc: Location) -> StmtResult {
@@ -492,27 +481,27 @@ impl Parser {
 
         let condition = match condition {
             Some(expr) => expr,
-            None => Expr::literal(TokLoc::new(token::Literal::True, loc)).boxed(),
+            None => self.ast.add_expr(Expr::literal(token::Literal::True), loc),
         };
 
         let body = match increment {
             None => self.statement()?,
-            Some(expr) => Stmt::Block {
-                statements: vec![self.statement()?, Stmt::Expr { expr }],
-            },
+            Some(expr) => {
+                let expr = self.ast.add_stmt(Stmt::expr(expr), loc);
+                let block = Stmt::block(Box::new([self.statement()?, expr]));
+                self.ast.add_stmt(block, loc)
+            }
         };
 
-        let while_stmt = Stmt::While {
-            loc,
-            condition,
-            body: body.boxed(),
-        };
+        let while_ = Stmt::while_(condition, body);
+        let while_ = self.ast.add_stmt(while_, loc);
 
         match init {
-            Some(stmt) => Ok(Stmt::Block {
-                statements: vec![stmt, while_stmt],
+            Some(stmt) => Ok({
+                let block = Stmt::block(Box::new([stmt, while_]));
+                self.ast.add_stmt(block, loc)
             }),
-            None => Ok(while_stmt),
+            None => Ok(while_),
         }
     }
 
@@ -526,7 +515,9 @@ impl Parser {
                 let _ = peek_no_eof! { self as [";"]
                     if is_tok!(Punctuation::Semicolon) => self.advance(),
                 }?;
-                Ok(Stmt::Return { loc, value })
+
+                let return_ = Stmt::return_(value);
+                Ok(self.ast.add_stmt(return_, loc))
             }
             _ => Err(syntax_error!("<expression> or ;", "<eof>", loc)),
         }
@@ -548,7 +539,8 @@ impl Parser {
 
         if let Ok(is_tok!(Punctuation::BraceRight)) = self.peek() {
             self.advance();
-            Ok(Stmt::Block { statements })
+            let block = Stmt::block(statements.into_boxed_slice());
+            Ok(self.ast.add_stmt(block, start))
         } else {
             Err(missing_delim!("}", start))
         }
@@ -559,7 +551,9 @@ impl Parser {
         let _ = peek_no_eof! { self as [";"]
             if is_tok!(Punctuation::Semicolon) => self.advance(),
         }?;
-        Ok(Stmt::Expr { expr })
+        let stmt = Stmt::expr(expr);
+        let loc = self.ast.get_expr(&expr).loc;
+        Ok(self.ast.add_stmt(stmt, loc))
     }
 
     fn if_statement(&mut self, loc: Location) -> StmtResult {
@@ -576,12 +570,11 @@ impl Parser {
             _ => None,
         };
 
-        Ok(Stmt::If {
-            loc,
-            condition,
-            then: then.boxed(),
-            otherwise: otherwise.map(Stmt::boxed),
-        })
+        let if_ = match otherwise {
+            Some(otherwise) => Stmt::if_else(condition, then, otherwise),
+            None => Stmt::if_(condition, then),
+        };
+        Ok(self.ast.add_stmt(if_, loc))
     }
 
     fn expression(&mut self) -> ExprResult {
@@ -596,26 +589,28 @@ impl Parser {
                 let loc = self.advance().unwrap().loc();
                 let value = self.assignment()?;
 
-                match *expr {
-                    Expr::RefExpr(lvalue, _) => match lvalue {
-                        RefExpr::Variable { var } => Ok(Expr::assignment(var, value).boxed()),
-                        RefExpr::Get { object, prop } => Ok(Expr::set(object, prop, value).boxed()),
-                        RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc)),
+                let expr = &self.ast.get_expr(&expr).expr;
+                let expr = match expr {
+                    Expr::RefExpr(lvalue) => match lvalue {
+                        RefExpr::Variable { var } => Expr::assignment(var.clone(), value),
+                        RefExpr::Get { object, prop } => Expr::set(*object, prop.clone(), value),
+                        RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc))?,
 
                         // TODO: use better error message
                         RefExpr::This { .. } => {
-                            Err(syntax_error!("<lvalue>", "<this keyword>", loc))
+                            Err(syntax_error!("<lvalue>", "<this keyword>", loc))?
                         }
                         RefExpr::Super { .. } => {
-                            Err(syntax_error!("<lvalue>", "<super keyword>", loc))
+                            Err(syntax_error!("<lvalue>", "<super keyword>", loc))?
                         }
 
                         // RefExpr::Grouping should protect these cases
                         RefExpr::Assignment { .. } => unreachable!(),
                         RefExpr::Set { .. } => unreachable!(),
                     },
-                    Expr::ValExpr(_, _) => Err(syntax_error!("<lvalue>", "<rvalue>", loc)),
-                }
+                    Expr::ValExpr(_) => Err(syntax_error!("<lvalue>", "<rvalue>", loc))?,
+                };
+                Ok(self.ast.add_expr(expr, loc))
             }
             _ => Ok(expr),
         }
@@ -654,7 +649,8 @@ impl Parser {
     fn unary(&mut self) -> ExprResult {
         if let Some(op) = conv::to_unary(self.peek()?) {
             self.advance();
-            Ok(Expr::unary(op, self.unary()?).boxed())
+            let expr = Expr::unary(op.tok, self.unary()?);
+            Ok(self.ast.add_expr(expr, op.loc))
         } else {
             self.call()
         }
@@ -668,7 +664,6 @@ impl Parser {
                 is_tok!(Punctuation::ParenLeft) => {
                     let loc = self.advance().unwrap().loc();
                     expr = self.finish_call(loc, expr)?;
-                    Ok(())
                 }
                 is_tok!(Punctuation::Dot) => {
                     let loc = self.advance().unwrap().loc();
@@ -677,27 +672,28 @@ impl Parser {
                     }?;
                     self.advance();
                     let tok = TokLoc::new(token::DotProp { name }, loc);
-                    expr = Expr::get(expr, tok).boxed();
-                    Ok(())
+                    let get = Expr::get(expr, tok.tok);
+                    expr = self.ast.add_expr(get, tok.loc);
                 }
                 _ => break,
-            }?;
+            };
         }
 
         Ok(expr)
     }
 
-    fn finish_call(&mut self, loc: Location, callee: Box<Expr>) -> ExprResult {
+    fn finish_call(&mut self, loc: Location, callee: ExprId) -> ExprResult {
         // zero argument
         if let is_tok!(Punctuation::ParenRight) = self.peek()? {
             self.advance();
-            return Ok(Expr::call(callee, Box::new([]), loc).boxed());
+            let call = Expr::call(callee, Box::new([]));
+            return Ok(self.ast.add_expr(call, loc));
         }
 
         // one or more arguments
         let mut arguments = Vec::new();
         loop {
-            arguments.push(*self.expression()?);
+            arguments.push(self.expression()?);
             match self.peek()? {
                 is_tok!(Punctuation::Comma) => {
                     self.advance();
@@ -713,16 +709,17 @@ impl Parser {
         if arguments.len() >= Expr::MAX_FUNC_ARGS {
             Err(ParseError::too_many_args(arguments.len(), loc))
         } else {
-            Ok(Expr::call(callee, arguments.into_boxed_slice(), loc).boxed())
+            let call = Expr::call(callee, arguments.into_boxed_slice());
+            Ok(self.ast.add_expr(call, loc))
         }
     }
 
     fn primary(&mut self) -> ExprResult {
         let curr = self.advance().expect("Unexpected end of file");
-        let loc = curr.loc();
+        let mut loc = curr.loc();
 
-        let lit = |lit| Expr::literal(TokLoc::new(lit, loc));
-        let var = |name| Expr::variable(TokLoc::new(token::Variable { name }, loc));
+        let lit = |lit| Expr::literal(lit);
+        let var = |name| Expr::variable(token::Variable { name });
 
         type Lit = token::Literal;
 
@@ -730,16 +727,16 @@ impl Parser {
             is_tok!(Keyword::True) => lit(Lit::True),
             is_tok!(Keyword::False) => lit(Lit::False),
             is_tok!(Keyword::Nil) => lit(Lit::Nil),
-            is_tok!(Keyword::This) => Expr::this(loc),
+            is_tok!(Keyword::This) => Expr::this(),
             is_tok!(Keyword::Super) => {
-                let loc = peek_no_eof! { self as ["."]
+                loc = peek_no_eof! { self as ["."]
                     if is_tok!(Punctuation::Dot) => self.advance().unwrap().loc(),
                 }?;
                 let prop = peek_no_eof! { self as ["<identifier>"]
                     if is_tok!(Literal::Identifier(name, _)) => token::DotProp { name: *name },
                 }?;
                 self.advance();
-                Expr::superr(TokLoc::new(prop, loc))
+                Expr::super_(prop)
             }
 
             is_tok!(Literal::String(str, _)) => lit(Lit::String(*str)),
@@ -752,9 +749,9 @@ impl Parser {
                     is_tok!(Punctuation::ParenRight) => self.advance(),
                     _ => Err(missing_delim!(")", loc))?,
                 };
-                match *expr {
-                    Expr::ValExpr(expr, id) => Expr::group_val(Box::new(expr), loc, id),
-                    Expr::RefExpr(expr, id) => Expr::group_ref(Box::new(expr), loc, id),
+                match self.ast.get_expr(&expr).expr {
+                    Expr::ValExpr(_) => Expr::group_val(expr),
+                    Expr::RefExpr(_) => Expr::group_ref(expr),
                 }
             }
 
@@ -762,7 +759,7 @@ impl Parser {
             _ => return Err(syntax_error!("<expression>", curr.static_str(), loc)),
         };
 
-        Ok(expr.boxed())
+        Ok(self.ast.add_expr(expr, loc))
     }
 
     fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
@@ -774,7 +771,8 @@ impl Parser {
         while let Some(op) = curr(self.peek()?) {
             self.advance();
             let right = inner(self)?;
-            expr = Expr::binary(expr, op, right).boxed();
+            let binary = Expr::binary(expr, op.tok, right);
+            expr = self.ast.add_expr(binary, op.loc);
         }
         Ok(expr)
     }
@@ -788,7 +786,8 @@ impl Parser {
         while let Some(kind) = curr(self.peek()?) {
             self.advance();
             let right = inner(self)?;
-            expr = Expr::logical(expr, kind, right).boxed();
+            let logical = Expr::logical(expr, kind.tok, right);
+            expr = self.ast.add_expr(logical, kind.loc);
         }
         Ok(expr)
     }
@@ -895,18 +894,24 @@ mod conv {
 }
 
 impl Program {
-    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedProgram<'a, 'b> {
+    pub fn display<'a, 'b, 'c>(
+        &'a self,
+        interner: &'b Interner,
+        ast: &'c Ast,
+    ) -> DisplayedProgram<'a, 'b, 'c> {
         DisplayedProgram {
             program: self,
             interner,
+            ast,
         }
     }
 }
 
-impl Display for DisplayedProgram<'_, '_> {
+impl Display for DisplayedProgram<'_, '_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for stmt in &self.program.statements {
-            writeln!(f, "{}", stmt.display(self.interner))?;
+            let stmt = &self.ast.get_stmt(stmt).stmt;
+            writeln!(f, "{}", stmt.display(self.interner, self.ast))?;
         }
         Ok(())
     }

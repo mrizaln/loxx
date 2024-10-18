@@ -1,6 +1,8 @@
 use std::rc::Rc;
 use std::{fmt::Display, ops::Deref};
 
+use crate::parse::ast::Ast;
+
 use super::class::{Class, Instance};
 use super::function::{Function, Native, UserDefined};
 use super::interner::{Interner, Key};
@@ -25,9 +27,10 @@ pub enum Value {
 
 /// A wrapper for `Value` that can be displayed. This is necessary to "pass" interner as addtional
 /// argument to `Display::fmt` method.
-pub struct DisplayedValue<'a, 'b> {
+pub struct DisplayedValue<'a, 'b, 'c> {
     value: &'a Value,
     interner: &'b Interner,
+    ast: &'c Ast,
 }
 
 pub enum InvalidOp {
@@ -196,10 +199,15 @@ impl Value {
         }
     }
 
-    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedValue<'a, 'b> {
+    pub fn display<'a, 'b, 'c>(
+        &'a self,
+        interner: &'b Interner,
+        ast: &'c Ast,
+    ) -> DisplayedValue<'a, 'b, 'c> {
         DisplayedValue {
             value: self,
             interner,
+            ast,
         }
     }
 
@@ -224,7 +232,7 @@ impl Value {
     }
 }
 
-impl Display for DisplayedValue<'_, '_> {
+impl Display for DisplayedValue<'_, '_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let interner = self.interner;
         match self.value {
@@ -244,7 +252,8 @@ impl Display for DisplayedValue<'_, '_> {
             ),
             Value::Function(func) => match func.deref() {
                 Function::UserDefined(func) => {
-                    let name = interner.resolve(func.func.name);
+                    let func = &self.ast.get_func(&func.func).func;
+                    let name = interner.resolve(func.name);
                     write!(f, "<fun {name}>")
                 }
                 Function::Native(func) => {

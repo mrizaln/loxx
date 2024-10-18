@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
-use crate::parse::stmt::{StmtFunction, Unwind};
+use crate::parse::stmt::{Stmt, StmtFunctionId, StmtFunctionL, Unwind};
 use crate::util::Location;
 
 use super::class::Instance;
@@ -34,7 +34,7 @@ pub struct Native {
 
 #[derive(Clone, Debug)]
 pub struct UserDefined {
-    pub func: Rc<StmtFunction>,
+    pub func: StmtFunctionId,
     pub capture: Rc<Env>,
     pub kind: Kind,
 }
@@ -81,7 +81,7 @@ impl FunctionError {
 }
 
 impl UserDefined {
-    pub fn new(func: Rc<StmtFunction>, capture: Rc<Env>, kind: Kind) -> Self {
+    pub fn new(func: StmtFunctionId, capture: Rc<Env>, kind: Kind) -> Self {
         Self {
             func,
             capture,
@@ -89,19 +89,16 @@ impl UserDefined {
         }
     }
 
-    pub fn arity(&self) -> usize {
-        self.func.params.len()
-    }
-
     pub fn call(
         &self,
         args: Box<[Value]>,
         interpreter: &Interpreter,
     ) -> Result<Value, RuntimeError> {
-        if args.len() != self.arity() {
+        let StmtFunctionL { func, loc } = interpreter.ast.get_func(&self.func);
+        if args.len() != func.params.len() {
             return Err(FunctionError::MismatchedArgument {
-                loc: self.func.loc,
-                expect: self.arity(),
+                loc: *loc,
+                expect: func.params.len(),
                 got: args.len(),
             }
             .into());
@@ -112,10 +109,15 @@ impl UserDefined {
 
         // https://github.com/rust-lang/rust/issues/59878
         for (i, arg) in args.into_vec().into_iter().enumerate() {
-            env.define(self.func.params[i], arg);
+            env.define(func.params[i], arg);
         }
 
-        for stmt in self.func.body.iter() {
+        let body = match &interpreter.ast.get_stmt(&func.body).stmt {
+            Stmt::Block { statements } => statements,
+            _ => unreachable!("Function body should be block"),
+        };
+
+        for stmt in body.iter() {
             if let Unwind::Return(value, _) = interpreter.execute(stmt)? {
                 match self.kind {
                     Kind::Function => return Ok(value),
@@ -139,7 +141,7 @@ impl UserDefined {
     pub fn bind(&self, instance: Rc<Instance>, interner: &Interner) -> UserDefined {
         let new_capture = Env::with_parent(Rc::clone(&self.capture));
         new_capture.define(interner.key_this, Value::Instance(instance));
-        UserDefined::new(Rc::clone(&self.func), new_capture.into(), self.kind)
+        UserDefined::new(self.func, new_capture.into(), self.kind)
     }
 }
 
