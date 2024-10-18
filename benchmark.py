@@ -84,7 +84,7 @@ def pprint(stdout: str, stderr: str):
 
 
 def benchmarks_file_generator() -> Generator[Path, None, None]:
-    dir = DIR / "test" / "benchmark"
+    dir = DIR / "benchmark"
     for root, _, files in dir.walk():
         for file in files:
             yield root / file
