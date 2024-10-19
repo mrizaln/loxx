@@ -127,7 +127,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
 pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
     let contents = {
         let mut string = String::new();
-        let mut file = File::open(path.clone())?;
+        let mut file = File::open(path)?;
         file.read_to_string(&mut string)?;
 
         match string.is_empty() {

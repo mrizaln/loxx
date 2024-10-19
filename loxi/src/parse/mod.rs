@@ -718,7 +718,7 @@ impl Parser<'_> {
         let curr = self.advance().expect("Unexpected end of file");
         let mut loc = curr.loc();
 
-        let lit = |lit| Expr::literal(lit);
+        let lit = Expr::literal;
         let var = |name| Expr::variable(token::Variable { name });
 
         type Lit = token::Literal;

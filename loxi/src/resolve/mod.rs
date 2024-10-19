@@ -142,7 +142,7 @@ impl Resolver<'_, '_> {
                     Stmt::Block { statements } => statements,
                     _ => unreachable!("Shold be block"),
                 };
-                self.resolve_function(&func.params, &body, *loc, FunctionContext::Function)
+                self.resolve_function(&func.params, body, *loc, FunctionContext::Function)
             }
             Stmt::Return { value } => {
                 match self.func_context {
@@ -214,7 +214,7 @@ impl Resolver<'_, '_> {
     }
 
     fn resolve_expr(&mut self, expr_id: &ExprId) -> Result<(), ResolveError> {
-        let ExprL { expr, loc } = self.ast.get_expr(&expr_id);
+        let ExprL { expr, loc } = self.ast.get_expr(expr_id);
         match expr {
             Expr::ValExpr(expr) => self.resolve_val_expr(expr),
             Expr::RefExpr(expr) => self.resolve_ref_expr(expr, expr_id, *loc),

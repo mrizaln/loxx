@@ -58,10 +58,22 @@ pub fn to_str<'a, const M: usize, const N: usize>(
     std::str::from_utf8(&buf[..pos]).expect("All chars is valid")
 }
 
-/// raise a SIGTRAP signal (for debugging purposes)
-/// https://stackoverflow.com/a/78843608/16506263
+/// Raise a SIGTRAP signal (for debugging purposes).
+/// This function is defined because the language does not have a way to raise a SIGTRAP signal (at
+/// least in stable), and I can't use `breakpoint` crate for some reason.
+///
+/// Inspired by [a discussion on StackOverflow](https://stackoverflow.com/a/78843608/16506263)
+///
+/// # Safety
+///
+/// This function is unsafe because it requires the processor itself to have the `int3` instruction
+/// and can be used to trap the program execution.
 #[cfg(target_arch = "x86_64")]
 #[allow(unused)]
 pub unsafe fn sigtrap() {
-    std::arch::asm!("int3")
+    std::arch::asm!("int3");
+
+    // if opened in a debugger, the highlighted line will be the next instruction after the `int3`,
+    // which might be confusing, so I add a dummy line here.
+    let _ = 0;
 }
