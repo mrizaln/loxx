@@ -68,6 +68,11 @@ The benchmarks are performed on an **Intel Core i5-10500H machine with the frequ
 > enable using cargo `--features` flag
 
 - `unicode`: allow non-whitespace unicode as identifier.
+- `loxlox`: provides the following functions that facilitate [LoxLox](https://github.com/benhoyt/loxlox)
+  - `getc()`: get char from `stdin` as number (currently not handling `utf8` properly)
+  - `chr(ch)`: turn char code number into `string` (currently not handling `utf8` properly, if they are encountered `chr` will return `nil` instead)
+  - `exit(status)`: exit with given status code
+  - `print_error(msg)`: print message to `stderr` (I modify it so it can print any kind of Lox [`Value`](./loxi/src/interp/value.rs))
 
 ## TODO
 
