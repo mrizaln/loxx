@@ -96,7 +96,7 @@ impl Interpreter {
         for stmt in program.statements.iter() {
             match self.execute(stmt)? {
                 Unwind::None => (),
-                Unwind::Return(_, _) => {
+                Unwind::Return(_) => {
                     unreachable!("stray return detection should have been handled in Resolver!")
                 }
             }
@@ -135,8 +135,8 @@ impl Interpreter {
             Stmt::Block { statements } => {
                 let _local = self.dyn_env.create_scope();
                 for stmt in statements {
-                    if let Unwind::Return(value, loc) = self.execute(stmt)? {
-                        return Ok(Unwind::Return(value, loc));
+                    if let Unwind::Return(value) = self.execute(stmt)? {
+                        return Ok(Unwind::Return(value));
                     }
                 }
                 Ok(Unwind::None)
@@ -148,8 +148,8 @@ impl Interpreter {
                 ..
             } => match self.eval(condition)?.truthiness() {
                 true => {
-                    if let Unwind::Return(value, loc) = self.execute(then)? {
-                        Ok(Unwind::Return(value, loc))
+                    if let Unwind::Return(value) = self.execute(then)? {
+                        Ok(Unwind::Return(value))
                     } else {
                         Ok(Unwind::None)
                     }
@@ -166,8 +166,8 @@ impl Interpreter {
                 condition, body, ..
             } => {
                 while self.eval(condition)?.truthiness() {
-                    if let Unwind::Return(value, loc) = self.execute(body)? {
-                        return Ok(Unwind::Return(value, loc));
+                    if let Unwind::Return(value) = self.execute(body)? {
+                        return Ok(Unwind::Return(value));
                     }
                 }
                 Ok(Unwind::None)
@@ -189,7 +189,7 @@ impl Interpreter {
                     Some(expr) => self.eval(expr)?,
                     None => Value::nil(),
                 };
-                Ok(Unwind::Return(value, *loc))
+                Ok(Unwind::Return(value))
             }
             Stmt::Class {
                 name,

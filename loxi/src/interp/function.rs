@@ -128,7 +128,7 @@ impl UserDefined {
         };
 
         for stmt in body.iter() {
-            if let Unwind::Return(value, _) = interpreter.execute(stmt)? {
+            if let Unwind::Return(value) = interpreter.execute(stmt)? {
                 match self.kind {
                     Kind::Function => return Ok(value),
                     Kind::Constructor => match value {

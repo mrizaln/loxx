@@ -8,7 +8,7 @@ use super::ast::Ast;
 use super::expr::ExprId;
 
 pub enum Unwind {
-    Return(Value, Location),
+    Return(Value),
     None,
 }
 
