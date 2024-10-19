@@ -3,6 +3,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
+use crate::native_fn;
 use crate::parse::ast::Ast;
 use crate::parse::expr::{Expr, ExprId, ExprL, RefExpr, ValExpr};
 use crate::parse::stmt::{StmtFunctionL, StmtId, StmtL};
@@ -83,8 +84,12 @@ impl Interpreter {
         interp
     }
 
-    pub fn interner_and_ast(&mut self) -> (&mut Interner, &mut Ast) {
+    pub fn interner_and_ast_mut(&mut self) -> (&mut Interner, &mut Ast) {
         (&mut self.interner, &mut self.ast)
+    }
+
+    pub fn interner_and_ast(&self) -> (&Interner, &Ast) {
+        (&self.interner, &self.ast)
     }
 
     pub fn interpret(
@@ -105,9 +110,21 @@ impl Interpreter {
     }
 
     fn populate_env(&mut self) {
-        let name = self.interner.get_or_intern("clock");
-        let clock = Native::new(name, Box::new([]), native_functions::clock);
-        self.dyn_env.define(name, Value::native_function(clock));
+        let mut define = |name: &str, args, body| {
+            let name = self.interner.get_or_intern(name);
+            let func = Native::new(name, args, body);
+            self.dyn_env.define(name, Value::native_function(func));
+        };
+
+        define("clock", 0, native_fn::clock);
+
+        #[cfg(feature = "loxlox")]
+        {
+            define("getc", 0, native_fn::loxlox::getc);
+            define("chr", 1, native_fn::loxlox::chr);
+            define("exit", 1, native_fn::loxlox::exit);
+            define("print_error", 1, native_fn::loxlox::print_error);
+        }
     }
 
     fn execute(&self, stmt: &StmtId) -> Result<Unwind, RuntimeError> {
@@ -128,7 +145,6 @@ impl Interpreter {
                     None => Value::nil(),
                 };
 
-                // TODO: add location metadata
                 self.dyn_env.define(*name, value);
                 Ok(Unwind::None)
             }
@@ -327,8 +343,8 @@ impl Interpreter {
 
                 match callee {
                     Value::Function(func) => match func.as_ref() {
-                        function::Function::Native(func) => func.call(args),
-                        function::Function::UserDefined(func) => func.call(self, args),
+                        function::Function::Native(func) => func.call(self, args, loc),
+                        function::Function::UserDefined(func) => func.call(self, args, loc),
                     },
                     Value::Class(class) => {
                         let instance = class.construct(loc, self, args)?;
@@ -441,18 +457,5 @@ impl Interpreter {
 impl Default for Interpreter {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-mod native_functions {
-    use super::*;
-
-    pub fn clock(_args: &[Value]) -> Result<Value, RuntimeError> {
-        let now = std::time::SystemTime::now();
-        let seconds = now
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs_f64();
-        Ok(Value::number(seconds))
     }
 }

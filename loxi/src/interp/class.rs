@@ -79,7 +79,7 @@ impl Class {
         };
 
         let func = ctor.bind(Rc::clone(&instance), &interpreter.interner);
-        let value = func.call(interpreter, args)?;
+        let value = func.call(interpreter, args, loc)?;
 
         match value {
             Value::Nil => (),

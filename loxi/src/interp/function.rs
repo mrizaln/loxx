@@ -25,12 +25,12 @@ pub enum Function {
     UserDefined(UserDefined),
 }
 
-type NativeFn = fn(args: &[Value]) -> Result<Value, RuntimeError>;
+type NativeFn = fn(&Interpreter, &[Value], Location) -> Result<Value, FunctionError>;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Native {
     pub name: Key,
-    pub params: Box<[Key]>,
+    pub arity: usize,
     pub body: NativeFn,
 }
 
@@ -49,24 +49,36 @@ pub enum FunctionError {
         expect: usize,
         got: usize,
     },
+
+    #[error("{loc} RuntimeError: Invalid argument type for native function. Expected {expect} got {got} instead")]
+    NativeArgumentError {
+        loc: Location,
+        expect: &'static str,
+        got: &'static str,
+    },
 }
 
 impl Native {
-    pub fn new(name: Key, params: Box<[Key]>, body: NativeFn) -> Self {
-        Self { name, params, body }
+    pub fn new(name: Key, arity: usize, body: NativeFn) -> Self {
+        Self { name, arity, body }
     }
 
     pub fn arity(&self) -> usize {
-        self.params.len()
+        self.arity
     }
 
-    pub fn call<F>(&self, args: ValueGen<'_, '_, F>) -> Result<Value, RuntimeError>
+    pub fn call<F>(
+        &self,
+        interpreter: &Interpreter,
+        args: ValueGen<'_, '_, F>,
+        loc: Location,
+    ) -> Result<Value, RuntimeError>
     where
         F: Fn(ExprId) -> Result<Value, RuntimeError>,
     {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
-                loc: Location::new(0, 0),
+                loc,
                 expect: self.arity(),
                 got: args.len(),
             }
@@ -74,15 +86,7 @@ impl Native {
         }
 
         let args = args.collect::<Result<Box<_>, _>>()?;
-        (self.body)(&args)
-    }
-}
-
-impl FunctionError {
-    pub fn loc(&self) -> Location {
-        match self {
-            FunctionError::MismatchedArgument { loc, .. } => *loc,
-        }
+        Ok((self.body)(interpreter, &args, loc)?)
     }
 }
 
@@ -99,14 +103,15 @@ impl UserDefined {
         &self,
         interpreter: &Interpreter,
         args: ValueGen<'_, '_, F>,
+        loc: Location,
     ) -> Result<Value, RuntimeError>
     where
         F: Fn(ExprId) -> Result<Value, RuntimeError>,
     {
-        let StmtFunctionL { func, loc } = interpreter.ast.get_func(&self.func);
+        let StmtFunctionL { func, .. } = interpreter.ast.get_func(&self.func);
         if args.len() != func.params.len() {
             return Err(FunctionError::MismatchedArgument {
-                loc: *loc,
+                loc,
                 expect: func.params.len(),
                 got: args.len(),
             }
@@ -172,6 +177,15 @@ impl PartialOrd for UserDefined {
             let lhs = Rc::as_ptr(&self.capture) as usize;
             let rhs = Rc::as_ptr(&other.capture) as usize;
             lhs.partial_cmp(&rhs)
+        }
+    }
+}
+
+impl FunctionError {
+    pub fn loc(&self) -> Location {
+        match self {
+            FunctionError::MismatchedArgument { loc, .. } => *loc,
+            FunctionError::NativeArgumentError { loc, .. } => *loc,
         }
     }
 }

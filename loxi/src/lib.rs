@@ -12,6 +12,7 @@ use self::util::Location;
 pub mod lex;
 pub mod parse;
 pub mod util;
+pub mod native_fn;
 
 mod interp;
 mod resolve;
@@ -56,7 +57,7 @@ pub enum RunMode {
 
 pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     let mut interpreter = Interpreter::new();
-    let (interner, ast) = interpreter.interner_and_ast();
+    let (interner, ast) = interpreter.interner_and_ast_mut();
 
     // lexing
     let lexer = Lexer::new(program, interner);
