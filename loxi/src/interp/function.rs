@@ -3,11 +3,13 @@ use std::rc::Rc;
 
 use thiserror::Error;
 
+use crate::parse::expr::ExprId;
 use crate::parse::stmt::{Stmt, StmtFunctionId, StmtFunctionL, Unwind};
 use crate::util::Location;
 
 use super::class::Instance;
 use super::interner::{Interner, Key};
+use super::value::ValueGen;
 use super::{env::Env, value::Value};
 use super::{Interpreter, RuntimeError};
 
@@ -23,7 +25,7 @@ pub enum Function {
     UserDefined(UserDefined),
 }
 
-type NativeFn = fn(args: Box<[Value]>) -> Result<Value, RuntimeError>;
+type NativeFn = fn(args: &[Value]) -> Result<Value, RuntimeError>;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Native {
@@ -58,7 +60,10 @@ impl Native {
         self.params.len()
     }
 
-    pub fn call(&self, args: Box<[Value]>) -> Result<Value, RuntimeError> {
+    pub fn call<F>(&self, args: ValueGen<'_, '_, F>) -> Result<Value, RuntimeError>
+    where
+        F: Fn(ExprId) -> Result<Value, RuntimeError>,
+    {
         if args.len() != self.arity() {
             return Err(FunctionError::MismatchedArgument {
                 loc: Location::new(0, 0),
@@ -68,7 +73,8 @@ impl Native {
             .into());
         }
 
-        (self.body)(args)
+        let args = args.collect::<Result<Box<_>, _>>()?;
+        (self.body)(&args)
     }
 }
 
@@ -89,11 +95,14 @@ impl UserDefined {
         }
     }
 
-    pub fn call(
+    pub fn call<F>(
         &self,
-        args: Box<[Value]>,
         interpreter: &Interpreter,
-    ) -> Result<Value, RuntimeError> {
+        args: ValueGen<'_, '_, F>,
+    ) -> Result<Value, RuntimeError>
+    where
+        F: Fn(ExprId) -> Result<Value, RuntimeError>,
+    {
         let StmtFunctionL { func, loc } = interpreter.ast.get_func(&self.func);
         if args.len() != func.params.len() {
             return Err(FunctionError::MismatchedArgument {
@@ -104,11 +113,12 @@ impl UserDefined {
             .into());
         }
 
+        let args = args.collect::<Result<Vec<_>, _>>()?;
+
         let (env, interner) = (&interpreter.dyn_env, &interpreter.interner);
         let _guard = env.bind_scope(Rc::new(Env::with_parent(Rc::clone(&self.capture))));
 
-        // https://github.com/rust-lang/rust/issues/59878
-        for (i, arg) in args.into_vec().into_iter().enumerate() {
+        for (i, arg) in args.into_iter().enumerate() {
             env.define(func.params[i], arg);
         }
 
@@ -157,7 +167,7 @@ impl PartialOrd for UserDefined {
         let rhs = &other.func;
 
         if lhs != rhs {
-            lhs.partial_cmp(&rhs)
+            lhs.partial_cmp(rhs)
         } else {
             let lhs = Rc::as_ptr(&self.capture) as usize;
             let rhs = Rc::as_ptr(&other.capture) as usize;

@@ -4,11 +4,12 @@ use std::rc::Rc;
 
 use rustc_hash::FxHashMap;
 
+use crate::parse::expr::ExprId;
 use crate::util::Location;
 
 use super::function::{FunctionError, UserDefined};
 use super::interner::{Interner, Key};
-use super::value::Value;
+use super::value::{Value, ValueGen};
 use super::{Interpreter, RuntimeError};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,12 +53,15 @@ impl Class {
         }
     }
 
-    pub fn construct(
+    pub fn construct<F>(
         self: &Rc<Self>,
-        args: Box<[Value]>,
         loc: Location,
         interpreter: &Interpreter,
-    ) -> Result<Rc<Instance>, RuntimeError> {
+        args: ValueGen<'_, '_, F>,
+    ) -> Result<Rc<Instance>, RuntimeError>
+    where
+        F: Fn(ExprId) -> Result<Value, RuntimeError>,
+    {
         let instance = Instance::new(self);
 
         let ctor = match self.find_ctor() {
@@ -75,7 +79,7 @@ impl Class {
         };
 
         let func = ctor.bind(Rc::clone(&instance), &interpreter.interner);
-        let value = func.call(args, interpreter)?;
+        let value = func.call(interpreter, args)?;
 
         match value {
             Value::Nil => (),

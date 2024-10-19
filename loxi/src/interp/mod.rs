@@ -14,7 +14,7 @@ use self::class::{Class, Property};
 use self::env::DynamicEnv;
 use self::function::{Kind, Native, UserDefined};
 use self::interner::{Interner, Key};
-use self::value::Value;
+use self::value::{Value, ValueGen};
 
 pub mod class;
 pub mod env;
@@ -322,23 +322,16 @@ impl Interpreter {
             ValExpr::Call { callee, args } => {
                 let callee = self.eval(callee)?;
 
+                let mut gen = |expr_id| self.eval(&expr_id);
+                let args = ValueGen::new(args, &mut gen);
+
                 match callee {
-                    Value::Function(func) => {
-                        let args = args
-                            .into_iter()
-                            .map(|a| self.eval(a))
-                            .collect::<Result<Box<[_]>, _>>()?;
-                        match func.as_ref() {
-                            function::Function::Native(func) => func.call(args),
-                            function::Function::UserDefined(func) => func.call(args, self),
-                        }
-                    }
+                    Value::Function(func) => match func.as_ref() {
+                        function::Function::Native(func) => func.call(args),
+                        function::Function::UserDefined(func) => func.call(self, args),
+                    },
                     Value::Class(class) => {
-                        let args = args
-                            .into_iter()
-                            .map(|a| self.eval(a))
-                            .collect::<Result<Box<[_]>, _>>()?;
-                        let instance = class.construct(args, loc, self)?;
+                        let instance = class.construct(loc, self, args)?;
                         Ok(Value::Instance(instance))
                     }
                     _ => Err(RuntimeError::NotCallable(loc)),
@@ -454,7 +447,7 @@ impl Default for Interpreter {
 mod native_functions {
     use super::*;
 
-    pub fn clock(_args: Box<[Value]>) -> Result<Value, RuntimeError> {
+    pub fn clock(_args: &[Value]) -> Result<Value, RuntimeError> {
         let now = std::time::SystemTime::now();
         let seconds = now
             .duration_since(std::time::UNIX_EPOCH)

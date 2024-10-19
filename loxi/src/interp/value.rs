@@ -2,10 +2,12 @@ use std::rc::Rc;
 use std::{fmt::Display, ops::Deref};
 
 use crate::parse::ast::Ast;
+use crate::parse::expr::ExprId;
 
 use super::class::{Class, Instance};
 use super::function::{Function, Native, UserDefined};
 use super::interner::{Interner, Key};
+use super::RuntimeError;
 
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum Value {
@@ -36,6 +38,16 @@ pub struct DisplayedValue<'a, 'b, 'c> {
 pub enum InvalidOp {
     Unary(&'static str),
     Binary(&'static str, &'static str),
+}
+
+/// Helper struct that lazily generate values from a slice of `ExprId`.
+pub struct ValueGen<'a, 'b, F>
+where
+    F: Fn(ExprId) -> Result<Value, RuntimeError>,
+{
+    exprs: &'a [ExprId],
+    gen: &'b mut F,
+    index: usize,
 }
 
 type OpResult = Result<Value, InvalidOp>;
@@ -232,6 +244,21 @@ impl Value {
     }
 }
 
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        match self {
+            Value::Nil => Value::Nil,
+            Value::Bool(b) => Value::Bool(*b),
+            Value::Number(num) => Value::Number(*num),
+            Value::Function(fun) => Value::Function(Rc::clone(fun)),
+            Value::String(str) => Value::String(Rc::clone(str)),
+            Value::Class(class) => Value::Class(Rc::clone(class)),
+            Value::Instance(instance) => Value::Instance(Rc::clone(instance)),
+            Value::StringLiteral(key) => Value::StringLiteral(*key),
+        }
+    }
+}
+
 impl Display for DisplayedValue<'_, '_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let interner = self.interner;
@@ -269,17 +296,36 @@ impl Display for DisplayedValue<'_, '_, '_> {
     }
 }
 
-impl Clone for Value {
-    fn clone(&self) -> Self {
-        match self {
-            Value::Nil => Value::Nil,
-            Value::Bool(b) => Value::Bool(*b),
-            Value::Number(num) => Value::Number(*num),
-            Value::Function(fun) => Value::Function(Rc::clone(fun)),
-            Value::String(str) => Value::String(Rc::clone(str)),
-            Value::Class(class) => Value::Class(Rc::clone(class)),
-            Value::Instance(instance) => Value::Instance(Rc::clone(instance)),
-            Value::StringLiteral(key) => Value::StringLiteral(*key),
+impl<'a, 'b, F> ValueGen<'a, 'b, F>
+where
+    F: Fn(ExprId) -> Result<Value, RuntimeError>,
+{
+    pub fn new(exprs: &'a [ExprId], gen: &'b mut F) -> Self {
+        Self {
+            exprs,
+            gen,
+            index: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.exprs.len()
+    }
+}
+
+impl<F> Iterator for ValueGen<'_, '_, F>
+where
+    F: Fn(ExprId) -> Result<Value, RuntimeError>,
+{
+    type Item = Result<Value, RuntimeError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.exprs.len() {
+            let value = (self.gen)(self.exprs[self.index]);
+            self.index += 1;
+            Some(value)
+        } else {
+            None
         }
     }
 }
