@@ -10,7 +10,7 @@ pub struct TokLoc<T: LoxToken> {
     pub loc: Location,
 }
 
-// TODO: add other information like filename 
+// TODO: add other information like filename
 #[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Location {
     pub line: usize,

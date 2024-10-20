@@ -10,9 +10,9 @@ use self::resolve::Resolver;
 use self::util::Location;
 
 pub mod lex;
+pub mod native_fn;
 pub mod parse;
 pub mod util;
-pub mod native_fn;
 
 mod interp;
 mod resolve;
@@ -24,6 +24,14 @@ macro_rules! println_red {
     ($fmt:literal, $($arg:tt)*) => {
         let str = format!($fmt, $($arg)*);
         println!("\x1b[1;31m{}\x1b[00m", str)
+    };
+}
+
+#[macro_export]
+macro_rules! eprintln_red {
+    ($fmt:literal, $($arg:tt)*) => {
+        let str = format!($fmt, $($arg)*);
+        eprintln!("\x1b[1;31m{}\x1b[00m", str)
     };
 }
 
@@ -74,8 +82,8 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
                 lex::LexError::UnterminatedString(loc) => loc,
                 lex::LexError::UnableToParseNumber(loc, _) => loc,
             };
-            print_context(&lines, *loc);
-            println_red!("{}", err);
+            eprint_context(&lines, *loc);
+            eprintln_red!("{}", err);
         });
         return Err(LoxError::LexError(errors.len()));
     }
@@ -96,8 +104,8 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     let mut parser = Parser::new(ast);
     let program = parser.parse(tokens).map_err(|err| {
         err.iter().for_each(|e| {
-            print_context(&lines, e.loc());
-            println_red!("{}", e);
+            eprint_context(&lines, e.loc());
+            eprintln_red!("{}", e);
         });
         LoxError::ParseError
     })?;
@@ -110,15 +118,15 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     // resolving
     let mut resolver = Resolver::new(interner, ast);
     let resolve_map = resolver.resolve(&program).map_err(|err| {
-        print_context(&lines, err.loc());
-        println_red!("{}", err);
+        eprint_context(&lines, err.loc());
+        eprintln_red!("{}", err);
         LoxError::ResolveError
     })?;
 
     // interpreting
     interpreter.interpret(program, resolve_map).map_err(|err| {
-        print_context(&lines, err.loc());
-        println_red!("{}", err);
+        eprint_context(&lines, err.loc());
+        eprintln_red!("{}", err);
         LoxError::RuntimeError
     })?;
 
@@ -173,13 +181,14 @@ pub fn run_prompt() -> io::Result<()> {
 }
 
 #[rustfmt::skip]
-pub fn print_context(lines: &[&str], loc: Location) {
+pub fn eprint_context(lines: &[&str], loc: Location) {
     let line = match loc.line > lines.len() {
         true => "",
         false => lines[loc.line - 1],
     };
-    println!("{:->width$}", "", width = 80);
-    println!("{:>4} |", "");
-    println!("{:>4} | {}", loc.line, line);
-    println!("{:>4} | \x1b[1m{:>width$}\x1b[1;31m^\x1b[00m", "", "", width = loc.column - 1);
+
+    eprintln!("{:->width$}", "", width = 80);
+    eprintln!("{:>4} |", "");
+    eprintln!("{:>4} | {}", loc.line, line);
+    eprintln!("{:>4} | \x1b[1m{:>width$}\x1b[1;31m^\x1b[00m", "", "", width = loc.column - 1);
 }
