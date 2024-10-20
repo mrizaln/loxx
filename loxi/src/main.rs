@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use loxi::{run_file, run_prompt, LoxError, RunMode};
+use loxi::{run_file, run_prompt, LoxError, Mode};
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -37,9 +37,9 @@ fn main() -> ExitCode {
             }
 
             let mode = match (args.dump_lex, args.dump_parse) {
-                (true, false) => RunMode::DumpLex,
-                (false, true) => RunMode::DumpParse,
-                _ => RunMode::Normal,
+                (true, false) => Mode::DumpLex,
+                (false, true) => Mode::DumpParse,
+                _ => Mode::Normal,
             };
 
             if let Err(err) = run_file(path, mode) {

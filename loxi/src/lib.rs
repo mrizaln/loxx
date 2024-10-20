@@ -57,14 +57,14 @@ pub enum LoxError {
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub enum RunMode {
+pub enum Mode {
     Normal,
     DumpLex,
     DumpParse,
+    Repl,
 }
 
-pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
-    let mut interpreter = Interpreter::new();
+pub fn run(interpreter: &mut Interpreter, program: &str, mode: Mode) -> Result<(), LoxError> {
     let (interner, ast) = interpreter.interner_and_ast_mut();
 
     // lexing
@@ -88,7 +88,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
         return Err(LoxError::LexError(errors.len()));
     }
 
-    if mode == RunMode::DumpLex {
+    if mode == Mode::DumpLex {
         for tok in tokens.iter() {
             println!("{}", tok.display(interner));
         }
@@ -101,7 +101,11 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     }
 
     // parsing
-    let mut parser = Parser::new(ast);
+    let parse_mode = match mode {
+        Mode::Repl => parse::Mode::Repl,
+        _ => parse::Mode::Script,
+    };
+    let mut parser = Parser::new(ast, parse_mode);
     let program = parser.parse(tokens).map_err(|err| {
         err.iter().for_each(|e| {
             eprint_context(&lines, e.loc());
@@ -110,7 +114,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
         LoxError::ParseError
     })?;
 
-    if mode == RunMode::DumpParse {
+    if mode == Mode::DumpParse {
         print!("{}", program.display(interner, ast));
         return Ok(());
     }
@@ -133,7 +137,7 @@ pub fn run(program: &str, mode: RunMode) -> Result<(), LoxError> {
     Ok(())
 }
 
-pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
+pub fn run_file(path: PathBuf, mode: Mode) -> Result<(), LoxError> {
     let contents = {
         let mut string = String::new();
         let mut file = File::open(path)?;
@@ -152,7 +156,8 @@ pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
         string
     };
 
-    run(&contents, mode)?;
+    let mut interpreter = Interpreter::new();
+    run(&mut interpreter, &contents, mode)?;
     Ok(())
 }
 
@@ -160,7 +165,9 @@ pub fn run_file(path: PathBuf, mode: RunMode) -> Result<(), LoxError> {
 pub fn run_prompt() -> io::Result<()> {
     println!("Loxi: a Lox programming language interpreter (currently under construction)");
 
+    let mut interpreter = Interpreter::new();
     let mut line = String::new();
+
     loop {
         print!(">>> ");
         stdout().flush().expect("Unable to flush stdout");
@@ -169,7 +176,7 @@ pub fn run_prompt() -> io::Result<()> {
             break;
         }
 
-        if let Err(err) = run(&line, RunMode::Normal) {
+        if let Err(err) = run(&mut interpreter, &line, Mode::Repl) {
             println!("{}", err);
         }
 

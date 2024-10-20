@@ -4,7 +4,7 @@ use pretty_assertions::assert_eq;
 use crate::interp::interner::Interner;
 use crate::lex::Lexer;
 use crate::parse::ast::Ast;
-use crate::parse::Parser;
+use crate::parse::{Mode, Parser};
 use crate::util::Location;
 
 use super::{expr::*, stmt::*, token};
@@ -66,7 +66,7 @@ fn parse_to_a_correct_ast() {
 
     assert!(result.errors.is_empty());
 
-    let mut parser = Parser::new(&mut ast);
+    let mut parser = Parser::new(&mut ast, Mode::Script);
     let result = parser.parse(result.tokens);
 
     assert!(result.is_ok());

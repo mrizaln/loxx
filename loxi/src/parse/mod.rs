@@ -80,22 +80,23 @@
 
 use std::collections::VecDeque;
 use std::fmt::Display;
-use thiserror::Error;
 
 use crate::interp::interner::{Interner, Key};
 use crate::lex::{self, token as ltok};
-use crate::util::{Location, TokLoc};
+use crate::util::{Location, LoxToken, TokLoc};
 
 use expr::{Expr, RefExpr};
 use stmt::Stmt;
 
-use macros::{is_tok, missing_delim, peek_no_eof, syntax_error};
+use macros::{consume_identifier, consume_punctuation, is_tok, peek_no_eof};
 
 use self::ast::Ast;
+use self::error::{ParseError, ParseResultExt, SyntaxError};
 use self::expr::ExprId;
 use self::stmt::{StmtFunction, StmtFunctionId, StmtId};
 
 pub mod ast;
+pub mod error;
 pub mod expr;
 pub mod stmt;
 pub mod token;
@@ -103,71 +104,9 @@ pub mod token;
 #[cfg(test)]
 mod test;
 
-#[derive(Debug, Error)]
-pub enum SyntaxError {
-    #[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
-    Expect {
-        expect: &'static str,
-        real: &'static str,
-        loc: Location,
-    },
-
-    #[error("{start} SyntaxError: Missing closing delimiter '{delim}'")]
-    MissingDelim {
-        delim: &'static str,
-        start: Location,
-    },
-
-    #[error("{loc} SyntaxError: Number of arguments exceed language limit ({num} exceed {limit})")]
-    TooManyArguments {
-        num: usize,
-        limit: usize,
-        loc: Location,
-    },
-}
-
-impl SyntaxError {
-    pub fn loc(&self) -> Location {
-        match self {
-            SyntaxError::Expect { loc, .. } => *loc,
-            SyntaxError::MissingDelim { start, .. } => *start,
-            SyntaxError::TooManyArguments { loc, .. } => *loc,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum ParseError {
-    SyntaxError(SyntaxError),
-    EndOfFile(Location),
-}
-
-impl ParseError {
-    pub fn too_many_args(num: usize, loc: Location) -> ParseError {
-        ParseError::SyntaxError(SyntaxError::TooManyArguments {
-            num,
-            limit: Expr::MAX_FUNC_ARGS,
-            loc,
-        })
-    }
-
-    /// Convert the variant to ParseError::SyntaxError(SyntaxError::Expect)
-    pub fn syntax_err(self, expect: &'static str) -> Self {
-        match self {
-            ParseError::EndOfFile(loc) => syntax_error!(expect, "<eof>", loc),
-            _ => self,
-        }
-    }
-
-    /// convert the variant to ParseError::SyntaxError(SyntaxError::MissingDelim)
-    pub fn missing_delim(self, delim: &'static str, start: Location) -> Self {
-        match self {
-            ParseError::EndOfFile(_) => {
-                ParseError::SyntaxError(SyntaxError::MissingDelim { start, delim })
-            }
-            _ => self,
-        }
-    }
+pub enum Mode {
+    Script,
+    Repl,
 }
 
 pub struct Parser<'a> {
@@ -175,6 +114,7 @@ pub struct Parser<'a> {
     errors: Vec<SyntaxError>,
     current: Option<lex::Token>,
     ast: &'a mut Ast,
+    mode: Mode,
 }
 
 pub struct Program {
@@ -187,16 +127,17 @@ pub struct DisplayedProgram<'a, 'b, 'c> {
     ast: &'c Ast,
 }
 
-pub type ExprResult = Result<ExprId, ParseError>;
-pub type StmtResult = Result<StmtId, ParseError>;
+type ExprResult = Result<ExprId, ParseError>;
+type StmtResult = Result<StmtId, SyntaxError>;
 
 impl Parser<'_> {
-    pub fn new(ast: &mut Ast) -> Parser {
+    pub fn new(ast: &mut Ast, mode: Mode) -> Parser {
         Parser {
             tokens: VecDeque::new(),
             errors: Vec::new(),
             current: None,
             ast,
+            mode,
         }
     }
 
@@ -259,10 +200,7 @@ impl Parser<'_> {
             match stmt {
                 Ok(stmt) => Some(stmt),
                 Err(err) => {
-                    match err {
-                        ParseError::SyntaxError(err) => self.errors.push(err),
-                        ParseError::EndOfFile(_) => (),
-                    };
+                    self.errors.push(err);
                     self.synchronize();
                     None
                 }
@@ -273,135 +211,99 @@ impl Parser<'_> {
     }
 
     fn class_declaration(&mut self, loc: Location) -> StmtResult {
-        let name = peek_no_eof! { self as ["<identifier>"]
-            if is_tok!(Literal::Identifier(str, _)) => *str,
-        }?;
-        self.advance();
+        let (name, _) = consume_identifier!(self)?;
 
-        let base = match self.peek() {
-            Ok(is_tok!(Operator::Less)) => {
+        let base = match self.peek_no_eof("< or {")? {
+            is_tok!(Operator::Less) => {
                 let loc = self.advance().unwrap().loc();
-                let base = peek_no_eof! { self as ["<identifier>"]
-                    if is_tok!(Literal::Identifier(str, _)) => *str,
-                }?;
-                self.advance();
+                let (base, _) = consume_identifier!(self)?;
                 let variable = Expr::variable(token::Variable { name: base });
                 Ok(Some(self.ast.add_expr(variable, loc)))
             }
-            Ok(is_tok!(Punctuation::BraceLeft)) => Ok(None),
-            Ok(tok) => Err(syntax_error!("< or {", tok.static_str(), tok.loc())),
-            Err(err) => Err(err.syntax_err("< or {")),
+            is_tok!(Punctuation::BraceLeft) => Ok(None),
+            tok => Err(SyntaxError::expect("< or {", tok.static_str(), tok.loc())),
         }?;
 
-        peek_no_eof! { self as ["{"] if is_tok!(Punctuation::BraceLeft) => self.advance(), }?;
+        consume_punctuation!(self, BraceLeft)?;
         let mut methods = Vec::new();
         loop {
-            match self.peek() {
-                Err(err) => Err(err.syntax_err("fun or }"))?,
-                Ok(is_tok!(Punctuation::BraceRight)) => break,
-                Ok(tok) => {
+            match self.peek_no_eof("<fun> or }")? {
+                is_tok!(Punctuation::BraceRight) => break,
+                tok => {
                     let loc = tok.loc();
                     let method = self.function_declaration(loc)?;
                     methods.push(method);
                 }
             };
         }
-        peek_no_eof! { self as ["}"] if is_tok!(Punctuation::BraceRight) => self.advance(), }?;
+        consume_punctuation!(self, BraceRight)?;
 
         let class = Stmt::class(name, base, methods.into_boxed_slice());
         Ok(self.ast.add_stmt(class, loc))
     }
 
-    fn function_declaration(&mut self, loc: Location) -> Result<StmtFunctionId, ParseError> {
-        let name = peek_no_eof! { self as ["<identifier>"]
-            if is_tok!(Literal::Identifier(name, _)) => *name,
-        }?;
-        self.advance();
-
-        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
-
+    fn function_declaration(&mut self, loc: Location) -> Result<StmtFunctionId, SyntaxError> {
+        let (name, _) = consume_identifier!(self)?;
+        consume_punctuation!(self, ParenLeft)?;
         let mut params = Vec::<Key>::new();
 
-        match self.peek() {
-            Ok(is_tok!(Punctuation::ParenRight)) => {
+        peek_no_eof!(self, "<identifier> or )" => {
+            is_tok!(Punctuation::ParenRight) => {
                 self.advance();
-            }
-            Ok(is_tok!(Literal::Identifier(_, _))) => loop {
-                match self.peek() {
-                    Ok(is_tok!(Literal::Identifier(name, _))) => {
-                        params.push(*name);
-                        self.advance();
-                    }
-                    Ok(tok) => Err(syntax_error!(
-                        "<identifier or )",
-                        tok.static_str(),
-                        tok.loc()
-                    ))?,
-                    Err(err) => Err(err.syntax_err("<identifier> or )"))?,
-                };
-                match self.peek() {
-                    Ok(is_tok!(Punctuation::ParenRight)) => {
+            },
+            is_tok!(Literal::Identifier(_, _)) => loop {
+                let (name, _) = consume_identifier!(self)?;
+                params.push(name);
+
+                // I can't use `peek_no_eof!` here since this block contains `break` and `continue`
+                match self.peek_no_eof(", or )")? {
+                    is_tok!(Punctuation::ParenRight) => {
                         self.advance();
                         break;
-                    }
-                    Ok(is_tok!(Punctuation::Comma)) => {
+                    },
+                    is_tok!(Punctuation::Comma) => {
                         self.advance();
                         continue;
-                    }
-                    Ok(tok) => Err(syntax_error!(", or )", tok.static_str(), tok.loc()))?,
-                    Err(err) => Err(err.syntax_err(", or )"))?,
-                }
+                    },
+                    // so, this line is inevitable
+                    tok => Err(SyntaxError::expect(", or )", tok.static_str(), tok.loc()))?,
+                };
             },
-            Ok(tok) => Err(syntax_error!(
-                "<identifier> or )",
-                tok.static_str(),
-                tok.loc()
-            ))?,
-            Err(err) => Err(err.syntax_err("<identifier> or )"))?,
-        }
+        })?;
 
         if params.len() >= Expr::MAX_FUNC_ARGS {
-            Err(ParseError::too_many_args(params.len(), loc))?;
+            Err(SyntaxError::too_many_args(params.len(), loc))?;
         }
 
-        let body = peek_no_eof! { self as ["{"]
-            if is_tok!(Punctuation::BraceLeft) => {
-                let loc = self.advance().unwrap().loc();
-                self.block(loc)?
-            },
-        }?;
+        let body_loc = consume_punctuation!(self, BraceLeft)?;
+        let body = self.block(body_loc)?;
 
         let fun = StmtFunction::new(name, params.into_boxed_slice(), body);
         Ok(self.ast.add_func(fun, loc))
     }
 
     fn var_declaration(&mut self) -> StmtResult {
-        let (name, loc) = peek_no_eof! { self as ["<identifier>"]
-            if is_tok!(Literal::Identifier(name, loc)) => (*name, *loc),
-        }?;
-        self.advance();
+        let (name, loc) = consume_identifier!(self)?;
 
-        let init = peek_no_eof! { self as ["; or ="]
-            if is_tok!(Operator::Equal) => {
+        let init = match self.peek_no_eof("; or =")? {
+            is_tok!(Operator::Equal) => {
                 self.advance();
-                Some(self.expression().map_err(|err|err.syntax_err("<expression>"))?)
-            },
-            else tok => match tok {
+                Some(self.expression().map_syntax_err("<expression>")?)
+            }
+            tok => match tok {
                 is_tok!(Punctuation::Semicolon) => None,
-                _ => Err(syntax_error!("; or =", tok.static_str(), tok.loc()))?,
+                _ => Err(SyntaxError::expect("; or =", tok.static_str(), tok.loc()))?,
             },
-        }?;
+        };
 
-        let _ = peek_no_eof! { self as [";"]
-            if is_tok!(Punctuation::Semicolon) => self.advance(),
-        }?;
+        consume_punctuation!(self, Semicolon)?;
 
         let stmt = Stmt::var(name, init);
         Ok(self.ast.add_stmt(stmt, loc))
     }
 
     fn statement(&mut self) -> StmtResult {
-        match self.peek()? {
+        match self.peek_no_eof("<statement>")? {
             is_tok!(Keyword::Print) => {
                 let loc = self.advance().unwrap().loc();
                 self.print_statement(loc)
@@ -438,30 +340,24 @@ impl Parser<'_> {
     }
 
     fn print_statement(&mut self, loc: Location) -> StmtResult {
-        let stmt = self.expression_statement()?;
-        let expr = match &self.ast.get_stmt(&stmt).stmt {
-            Stmt::Expr { expr } => *expr,
-            _ => panic!("Should be expr"),
-        };
+        let expr = self.expression().map_syntax_err("<expression>")?;
+        consume_punctuation!(self, Semicolon)?;
         let stmt = Stmt::print(expr);
         Ok(self.ast.add_stmt(stmt, loc))
     }
 
     #[cfg(feature = "debug")]
     fn debug_statement(&mut self, loc: Location) -> StmtResult {
-        let stmt = self.expression_statement()?;
-        let expr = match &self.ast.get_stmt(&stmt).stmt {
-            Stmt::Expr { expr } => *expr,
-            _ => panic!("Should be expr"),
-        };
+        let expr = self.expression().map_syntax_err("<expression>")?;
+        consume_punctuation!(self, Semicolon)?;
         let stmt = Stmt::debug(expr);
         Ok(self.ast.add_stmt(stmt, loc))
     }
 
     fn while_statement(&mut self, loc: Location) -> StmtResult {
-        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
-        let condition = self.expression()?;
-        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+        consume_punctuation!(self, ParenLeft)?;
+        let condition = self.expression().map_syntax_err("<expression>")?;
+        consume_punctuation!(self, ParenRight)?;
         let body = self.statement()?;
 
         let stmt = Stmt::while_(condition, body);
@@ -469,12 +365,9 @@ impl Parser<'_> {
     }
 
     fn for_statement(&mut self, loc: Location) -> StmtResult {
-        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
+        consume_punctuation!(self, ParenLeft)?;
 
-        let init = match self
-            .peek()
-            .map_err(|err| err.syntax_err("<var_stmt> or <expr_stmt"))?
-        {
+        let init = match self.peek_no_eof("<var_stmt> or <expr_stmt")? {
             is_tok!(Punctuation::Semicolon) => {
                 self.advance();
                 None
@@ -486,17 +379,17 @@ impl Parser<'_> {
             _ => Some(self.expression_statement()?),
         };
 
-        let condition = peek_no_eof! { self as ["<expression>"]
-            if is_tok!(Punctuation::Semicolon) => None,
-            else _ => Some(self.expression()?),
-        }?;
-        peek_no_eof! { self as [";"] if is_tok!(Punctuation::Semicolon) => self.advance(), }?;
+        let condition = match self.peek_no_eof("<expression>")? {
+            is_tok!(Punctuation::Semicolon) => None,
+            _ => Some(self.expression().map_syntax_err("<expression>")?),
+        };
+        consume_punctuation!(self, Semicolon)?;
 
-        let increment = peek_no_eof! { self as [")"]
-            if is_tok!(Punctuation::ParenRight) => None,
-            else _ => Some(self.expression()?),
-        }?;
-        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+        let increment = match self.peek_no_eof(")")? {
+            is_tok!(Punctuation::ParenRight) => None,
+            _ => Some(self.expression().map_syntax_err("<expression>")?),
+        };
+        consume_punctuation!(self, ParenRight)?;
 
         // desugar the for loop into a while loop
 
@@ -527,21 +420,14 @@ impl Parser<'_> {
     }
 
     fn return_statement(&mut self, loc: Location) -> StmtResult {
-        match self.peek() {
-            Ok(tok) => {
-                let value = match tok {
-                    is_tok!(Punctuation::Semicolon) => None,
-                    _ => Some(self.expression()?),
-                };
-                let _ = peek_no_eof! { self as [";"]
-                    if is_tok!(Punctuation::Semicolon) => self.advance(),
-                }?;
+        let value = match self.peek_no_eof("<expression> or ;")? {
+            is_tok!(Punctuation::Semicolon) => None,
+            _ => Some(self.expression().map_syntax_err("<expression>")?),
+        };
+        consume_punctuation!(self, Semicolon)?;
 
-                let return_ = Stmt::return_(value);
-                Ok(self.ast.add_stmt(return_, loc))
-            }
-            _ => Err(syntax_error!("<expression> or ;", "<eof>", loc)),
-        }
+        let return_ = Stmt::return_(value);
+        Ok(self.ast.add_stmt(return_, loc))
     }
 
     fn block(&mut self, start: Location) -> StmtResult {
@@ -563,24 +449,35 @@ impl Parser<'_> {
             let block = Stmt::block(statements.into_boxed_slice());
             Ok(self.ast.add_stmt(block, start))
         } else {
-            Err(missing_delim!("}", start))
+            Err(SyntaxError::missing_delim("}", start))
         }
     }
 
     fn expression_statement(&mut self) -> StmtResult {
-        let expr = self.expression().map_err(|e| e.syntax_err(";"))?;
-        let _ = peek_no_eof! { self as [";"]
-            if is_tok!(Punctuation::Semicolon) => self.advance(),
-        }?;
-        let stmt = Stmt::expr(expr);
-        let loc = self.ast.get_expr(&expr).loc;
-        Ok(self.ast.add_stmt(stmt, loc))
+        let expr = self.expression().map_syntax_err("<expression>")?;
+        match self.peek() {
+            Ok(is_tok!(Punctuation::Semicolon)) => {
+                self.advance();
+                let stmt = Stmt::expr(expr);
+                let loc = self.ast.get_expr(&expr).loc;
+                Ok(self.ast.add_stmt(stmt, loc))
+            }
+            Ok(tok) => Err(SyntaxError::expect(";", tok.static_str(), tok.loc())),
+            Err(err) => match self.mode {
+                Mode::Script => Err(err.as_syntax_err(";")),
+                Mode::Repl => {
+                    let stmt = Stmt::print(expr);
+                    let loc = self.ast.get_expr(&expr).loc;
+                    Ok(self.ast.add_stmt(stmt, loc))
+                }
+            },
+        }
     }
 
     fn if_statement(&mut self, loc: Location) -> StmtResult {
-        peek_no_eof! { self as ["("] if is_tok!(Punctuation::ParenLeft) => self.advance(), }?;
-        let condition = self.expression()?;
-        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+        consume_punctuation!(self, ParenLeft)?;
+        let condition = self.expression().map_syntax_err("<expression>")?;
+        consume_punctuation!(self, ParenRight)?;
 
         let then = self.statement()?;
         let otherwise = match self.peek() {
@@ -605,8 +502,8 @@ impl Parser<'_> {
     fn assignment(&mut self) -> ExprResult {
         let expr = self.logical_or()?;
 
-        match self.peek()? {
-            is_tok!(Operator::Equal) => {
+        match self.peek() {
+            Ok(is_tok!(Operator::Equal)) => {
                 let loc = self.advance().unwrap().loc();
                 let value = self.assignment()?;
 
@@ -615,21 +512,23 @@ impl Parser<'_> {
                     Expr::RefExpr(lvalue) => match lvalue {
                         RefExpr::Variable { var } => Expr::assignment(var.clone(), value),
                         RefExpr::Get { object, prop } => Expr::set(*object, prop.clone(), value),
-                        RefExpr::Grouping { .. } => Err(syntax_error!("<lvalue>", "<group>", loc))?,
+                        RefExpr::Grouping { .. } => {
+                            Err(SyntaxError::expect("<lvalue>", "<group>", loc))?
+                        }
 
                         // TODO: use better error message
                         RefExpr::This { .. } => {
-                            Err(syntax_error!("<lvalue>", "<this keyword>", loc))?
+                            Err(SyntaxError::expect("<lvalue>", "<this keyword>", loc))?
                         }
                         RefExpr::Super { .. } => {
-                            Err(syntax_error!("<lvalue>", "<super keyword>", loc))?
+                            Err(SyntaxError::expect("<lvalue>", "<super keyword>", loc))?
                         }
 
                         // RefExpr::Grouping should protect these cases
                         RefExpr::Assignment { .. } => unreachable!(),
                         RefExpr::Set { .. } => unreachable!(),
                     },
-                    Expr::ValExpr(_) => Err(syntax_error!("<lvalue>", "<rvalue>", loc))?,
+                    Expr::ValExpr(_) => Err(SyntaxError::expect("<lvalue>", "<rvalue>", loc))?,
                 };
                 Ok(self.ast.add_expr(expr, loc))
             }
@@ -679,19 +578,15 @@ impl Parser<'_> {
 
     fn call(&mut self) -> ExprResult {
         let mut expr = self.primary()?;
-
         loop {
-            match self.peek()? {
-                is_tok!(Punctuation::ParenLeft) => {
+            match self.peek() {
+                Ok(is_tok!(Punctuation::ParenLeft)) => {
                     let loc = self.advance().unwrap().loc();
                     expr = self.finish_call(loc, expr)?;
                 }
-                is_tok!(Punctuation::Dot) => {
+                Ok(is_tok!(Punctuation::Dot)) => {
                     let loc = self.advance().unwrap().loc();
-                    let name = peek_no_eof! { self as ["<identifier>"]
-                        if is_tok!(Literal::Identifier(name, _)) => *name,
-                    }?;
-                    self.advance();
+                    let (name, _) = consume_identifier!(self)?;
                     let tok = TokLoc::new(token::DotProp { name }, loc);
                     let get = Expr::get(expr, tok.tok);
                     expr = self.ast.add_expr(get, tok.loc);
@@ -699,7 +594,6 @@ impl Parser<'_> {
                 _ => break,
             };
         }
-
         Ok(expr)
     }
 
@@ -724,7 +618,7 @@ impl Parser<'_> {
             }
         }
 
-        peek_no_eof! { self as [")"] if is_tok!(Punctuation::ParenRight) => self.advance(), }?;
+        consume_punctuation!(self, ParenRight)?;
 
         // NOTE: in the lox book, this arguments number check is done using >= instead of >
         if arguments.len() >= Expr::MAX_FUNC_ARGS {
@@ -750,13 +644,9 @@ impl Parser<'_> {
             is_tok!(Keyword::Nil) => lit(Lit::Nil),
             is_tok!(Keyword::This) => Expr::this(),
             is_tok!(Keyword::Super) => {
-                loc = peek_no_eof! { self as ["."]
-                    if is_tok!(Punctuation::Dot) => self.advance().unwrap().loc(),
-                }?;
-                let prop = peek_no_eof! { self as ["<identifier>"]
-                    if is_tok!(Literal::Identifier(name, _)) => token::DotProp { name: *name },
-                }?;
-                self.advance();
+                loc = consume_punctuation!(self, Dot)?;
+                let (name, _) = consume_identifier!(self)?;
+                let prop = token::DotProp { name };
                 Expr::super_(prop)
             }
 
@@ -768,7 +658,7 @@ impl Parser<'_> {
                 let expr = self.expression().map_err(|e| e.missing_delim(")", loc))?;
                 match self.peek().map_err(|e| e.missing_delim(")", loc))? {
                     is_tok!(Punctuation::ParenRight) => self.advance(),
-                    _ => Err(missing_delim!(")", loc))?,
+                    _ => Err(SyntaxError::missing_delim(")", loc))?,
                 };
                 match self.ast.get_expr(&expr).expr {
                     Expr::ValExpr(_) => Expr::group_val(expr),
@@ -777,7 +667,7 @@ impl Parser<'_> {
             }
 
             lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
-            _ => return Err(syntax_error!("<expression>", curr.static_str(), loc)),
+            _ => Err(SyntaxError::expect("<expression>", curr.static_str(), loc))?,
         };
 
         Ok(self.ast.add_expr(expr, loc))
@@ -789,9 +679,9 @@ impl Parser<'_> {
         F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
-        while let Some(op) = curr(self.peek()?) {
+        while let Some(op) = self.peek().ok().and_then(&curr) {
             self.advance();
-            let right = inner(self)?;
+            let right = inner(self).map_syntax_err("<expression>")?;
             let binary = Expr::binary(expr, op.tok, right);
             expr = self.ast.add_expr(binary, op.loc);
         }
@@ -804,9 +694,9 @@ impl Parser<'_> {
         F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
-        while let Some(kind) = curr(self.peek()?) {
+        while let Some(kind) = self.peek().ok().and_then(&curr) {
             self.advance();
-            let right = inner(self)?;
+            let right = inner(self).map_syntax_err("<expression>")?;
             let logical = Expr::logical(expr, kind.tok, right);
             expr = self.ast.add_expr(logical, kind.loc);
         }
@@ -822,95 +712,13 @@ impl Parser<'_> {
         }
     }
 
+    fn peek_no_eof(&mut self, expect: &'static str) -> Result<&lex::Token, SyntaxError> {
+        self.peek().map_syntax_err(expect)
+    }
+
     fn advance(&mut self) -> Option<&lex::Token> {
         self.current = self.tokens.pop_front();
         self.current.as_ref()
-    }
-}
-
-mod conv {
-    use super::*;
-
-    pub fn to_equality(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
-        let new_tok = match tok {
-            is_tok!(Operator::BangEqual) => token::BinaryOp::NotEqual,
-            is_tok!(Operator::EqualEqual) => token::BinaryOp::Equal,
-            _ => return None,
-        };
-
-        Some(TokLoc {
-            tok: new_tok,
-            loc: tok.loc(),
-        })
-    }
-
-    pub fn to_comparison(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
-        let new_tok = match tok {
-            is_tok!(Operator::Greater) => token::BinaryOp::Greater,
-            is_tok!(Operator::GreaterEqual) => token::BinaryOp::GreaterEq,
-            is_tok!(Operator::Less) => token::BinaryOp::Less,
-            is_tok!(Operator::LessEqual) => token::BinaryOp::LessEq,
-            _ => return None,
-        };
-        Some(TokLoc {
-            tok: new_tok,
-            loc: tok.loc(),
-        })
-    }
-
-    pub fn to_term(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
-        let new_tok = match tok {
-            is_tok!(Operator::Plus) => token::BinaryOp::Add,
-            is_tok!(Operator::Minus) => token::BinaryOp::Sub,
-            _ => return None,
-        };
-        Some(TokLoc {
-            tok: new_tok,
-            loc: tok.loc(),
-        })
-    }
-
-    pub fn to_factor(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
-        let new_tok = match tok {
-            is_tok!(Operator::Star) => token::BinaryOp::Mul,
-            is_tok!(Operator::Slash) => token::BinaryOp::Div,
-            _ => return None,
-        };
-        Some(TokLoc {
-            tok: new_tok,
-            loc: tok.loc(),
-        })
-    }
-
-    pub fn to_unary(tok: &lex::Token) -> Option<TokLoc<token::UnaryOp>> {
-        let new_tok = match tok {
-            is_tok!(Operator::Bang) => token::UnaryOp::Not,
-            is_tok!(Operator::Minus) => token::UnaryOp::Minus,
-            _ => return None,
-        };
-        Some(TokLoc {
-            tok: new_tok,
-            loc: tok.loc(),
-        })
-    }
-
-    pub fn to_logical(
-        tok: &lex::Token,
-        kind: token::LogicalOp,
-    ) -> Option<TokLoc<token::LogicalOp>> {
-        let new_tok = match tok {
-            is_tok!(Keyword::And) => token::LogicalOp::And,
-            is_tok!(Keyword::Or) => token::LogicalOp::Or,
-            _ => return None,
-        };
-
-        match new_tok == kind {
-            true => Some(TokLoc {
-                tok: new_tok,
-                loc: tok.loc(),
-            }),
-            false => None,
-        }
     }
 }
 
@@ -938,48 +746,137 @@ impl Display for DisplayedProgram<'_, '_, '_> {
     }
 }
 
+mod conv {
+    use super::*;
+
+    pub fn to_equality(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+        let new_tok = match tok {
+            is_tok!(Operator::BangEqual) => token::BinaryOp::NotEqual,
+            is_tok!(Operator::EqualEqual) => token::BinaryOp::Equal,
+            _ => None?,
+        };
+        Some(TokLoc {
+            tok: new_tok,
+            loc: tok.loc(),
+        })
+    }
+
+    pub fn to_comparison(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+        let new_tok = match tok {
+            is_tok!(Operator::Greater) => token::BinaryOp::Greater,
+            is_tok!(Operator::GreaterEqual) => token::BinaryOp::GreaterEq,
+            is_tok!(Operator::Less) => token::BinaryOp::Less,
+            is_tok!(Operator::LessEqual) => token::BinaryOp::LessEq,
+            _ => None?,
+        };
+        Some(TokLoc {
+            tok: new_tok,
+            loc: tok.loc(),
+        })
+    }
+
+    pub fn to_term(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+        let new_tok = match tok {
+            is_tok!(Operator::Plus) => token::BinaryOp::Add,
+            is_tok!(Operator::Minus) => token::BinaryOp::Sub,
+            _ => None?,
+        };
+        Some(TokLoc {
+            tok: new_tok,
+            loc: tok.loc(),
+        })
+    }
+
+    pub fn to_factor(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+        let new_tok = match tok {
+            is_tok!(Operator::Star) => token::BinaryOp::Mul,
+            is_tok!(Operator::Slash) => token::BinaryOp::Div,
+            _ => None?,
+        };
+        Some(TokLoc {
+            tok: new_tok,
+            loc: tok.loc(),
+        })
+    }
+
+    pub fn to_unary(tok: &lex::Token) -> Option<TokLoc<token::UnaryOp>> {
+        let new_tok = match tok {
+            is_tok!(Operator::Bang) => token::UnaryOp::Not,
+            is_tok!(Operator::Minus) => token::UnaryOp::Minus,
+            _ => None?,
+        };
+        Some(TokLoc {
+            tok: new_tok,
+            loc: tok.loc(),
+        })
+    }
+
+    pub fn to_logical(
+        tok: &lex::Token,
+        kind: token::LogicalOp,
+    ) -> Option<TokLoc<token::LogicalOp>> {
+        let new_tok = match tok {
+            is_tok!(Keyword::And) => token::LogicalOp::And,
+            is_tok!(Keyword::Or) => token::LogicalOp::Or,
+            _ => None?,
+        };
+
+        match new_tok == kind {
+            true => Some(TokLoc {
+                tok: new_tok,
+                loc: tok.loc(),
+            }),
+            false => None,
+        }
+    }
+}
+
 mod macros {
-    /// convenience macro for creating a `ParseError::SyntaxError`
-    macro_rules! syntax_error {
-        ($expect:expr, $real:expr, $loc:expr) => {
-            ParseError::SyntaxError(SyntaxError::Expect {
-                expect: $expect,
-                real: $real,
-                loc: $loc,
-            })
-        };
-    }
-
-    macro_rules! missing_delim {
-        ($delim:expr, $start:expr) => {
-            ParseError::SyntaxError(SyntaxError::MissingDelim {
-                start: $start,
-                delim: $delim,
-            })
-        };
-    }
-
     /// peek `$self` for the next token, if it is not the expected token (`$tok`) or the end of
     /// file, return a `ParseError::SyntaxError`
     macro_rules! peek_no_eof {
-        ($self:ident as [$name:expr] if $tok:pat => $xpr:expr,) => {
+        // multiple pattern
+        ($self:ident, $expect:expr => { $($tok:pat => $xpr:expr,)+ }) => {
             match $self.peek() {
-                Ok($tok) => Ok($xpr),
-                Ok(tok) => Err(syntax_error!($name, tok.static_str(), tok.loc())),
-                Err(err) => Err(err.syntax_err($name)),
+                $(Ok($tok) => Ok($xpr),)+
+                Ok(tok) => Err(SyntaxError::expect($expect, tok.static_str(), tok.loc())),
+                Err(err) => Err(err.as_syntax_err($expect))
             }
         };
-        ($self:ident as [$name:expr] if $tok:pat => $xpr1:expr, else $other:tt => $xpr2:expr,) => {
-            match $self.peek() {
-                Ok($tok) => Ok($xpr1),
-                Ok($other) => Ok($xpr2),
-                Err(err) => Err(err.syntax_err($name)),
+        // single pattern, no braces
+        ($self:ident, $expect:expr => $tok:pat => $xpr:expr) => {
+            peek_no_eof!($self, $expect => { $tok => $xpr, })
+        };
+
+    }
+
+    /// consume the next token if it is the expected punctuation, return the location of said
+    /// punctuation otherwise return an error
+    macro_rules! consume_punctuation {
+        ($self:ident, $punc:ident) => {
+            peek_no_eof! {
+                $self,
+                ltok::Punctuation::$punc.as_str() => is_tok!(Punctuation::$punc) => $self.advance().unwrap().loc()
             }
         };
     }
 
+    /// consume the next token if it is an identifier, return the name and location of said
+    /// identifier otherwise return an error
+    macro_rules! consume_identifier {
+        ($self:ident) => {
+            peek_no_eof!($self, "<identifier>" => {
+                is_tok!(Literal::Identifier(name, loc)) => {
+                    let res = (*name, *loc);
+                    $self.advance();
+                    res
+                },
+            })
+        }
+    }
+
     /// convenience macro for creating a `lex::Token::$name(TokLoc { tok: ltok::$name::$tok, .. })`
-    macro_rules! ltokl {
+    macro_rules! is_tok {
         ($type:ident::$name:ident) => {
             lex::Token::$type(TokLoc {
                 tok: ltok::$type::$name,
@@ -994,8 +891,8 @@ mod macros {
         };
     }
 
-    pub(crate) use ltokl as is_tok;
-    pub(crate) use missing_delim;
+    pub(crate) use consume_identifier;
+    pub(crate) use consume_punctuation;
+    pub(crate) use is_tok;
     pub(crate) use peek_no_eof;
-    pub(crate) use syntax_error;
 }
