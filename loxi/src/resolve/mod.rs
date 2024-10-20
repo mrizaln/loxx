@@ -210,6 +210,9 @@ impl Resolver<'_, '_> {
                 mem::swap(&mut self.class_context, &mut prev_context);
                 Ok(())
             }
+
+            #[cfg(feature = "debug")]
+            Stmt::Debug { expr } => self.resolve_expr(expr),
         }
     }
 

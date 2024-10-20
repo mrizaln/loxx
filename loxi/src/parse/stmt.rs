@@ -51,6 +51,11 @@ pub enum Stmt {
         base: Option<ExprId>,
         methods: Box<[StmtFunctionId]>,
     },
+
+    #[cfg(feature = "debug")]
+    Debug {
+        expr: ExprId,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd)]
@@ -152,6 +157,11 @@ impl Stmt {
             methods,
         }
     }
+
+    #[cfg(feature = "debug")]
+    pub fn debug(expr: ExprId) -> Self {
+        Self::Debug { expr }
+    }
 }
 
 impl StmtId {
@@ -184,11 +194,11 @@ impl Display for DisplayedStmt<'_, '_, '_> {
                 let expr = &ast.get_expr(expr).expr;
                 Display::fmt(&expr.display(interner, ast), f)
             }
-            Stmt::Print { expr, .. } => {
+            Stmt::Print { expr } => {
                 let expr = &ast.get_expr(expr).expr;
                 write!(f, "(print {})", expr.display(interner, ast))
             }
-            Stmt::Var { name, init, .. } => {
+            Stmt::Var { name, init } => {
                 let name = interner.resolve(*name);
                 match init {
                     Some(val) => {
@@ -210,7 +220,6 @@ impl Display for DisplayedStmt<'_, '_, '_> {
                 condition,
                 then,
                 otherwise,
-                ..
             } => {
                 let condition = ast.get_expr(condition).expr.display(interner, ast);
                 let then = ast.get_stmt(then).stmt.display(interner, ast);
@@ -224,18 +233,16 @@ impl Display for DisplayedStmt<'_, '_, '_> {
                     }
                 }
             }
-            Stmt::While {
-                condition, body, ..
-            } => {
+            Stmt::While { condition, body } => {
                 let condition = ast.get_expr(condition).expr.display(interner, ast);
                 let body = ast.get_stmt(body).stmt.display(interner, ast);
                 write!(f, "(while {condition} {body})")
             }
-            Stmt::Function { func, .. } => {
+            Stmt::Function { func } => {
                 let func = &ast.get_func(func).func;
                 write!(f, "{}", func.display(interner, ast))
             }
-            Stmt::Return { value, .. } => match value {
+            Stmt::Return { value } => match value {
                 Some(val) => {
                     let val = &ast.get_expr(val).expr;
                     write!(f, "(return {})", val.display(interner, ast))
@@ -243,12 +250,19 @@ impl Display for DisplayedStmt<'_, '_, '_> {
                 None => write!(f, "(return nil)"),
             },
             Stmt::Class { name, methods, .. } => {
+                // TODO: show inheritance list
                 write!(f, "(class {}", interner.resolve(*name))?;
                 for func in methods {
                     let func = &ast.get_func(func).func;
                     write!(f, " {}", func.display(interner, ast))?;
                 }
                 write!(f, ")")
+            }
+
+            #[cfg(feature = "debug")]
+            Stmt::Debug { expr } => {
+                let expr = &ast.get_expr(expr).expr;
+                write!(f, "(debug {})", expr.display(interner, ast))
             }
         }
     }

@@ -136,9 +136,6 @@ impl<'a, 'b> Lexer<'a, 'b> {
     pub fn scan(mut self) -> ScanResult<'a> {
         while let Some((i, ch)) = self.advance() {
             self.scan_token(i, ch);
-
-            // simple debugging to see whether my code is stalling, or just slow :D
-            // print!("\r{} chars out of {} scanned", i, self.source.len());
         }
         self.add_token(Token::Eof(self.line.to_loc()));
 

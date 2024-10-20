@@ -52,6 +52,9 @@ pub enum Keyword {
     Super,
     This,
     Var,
+
+    #[cfg(feature = "debug")]
+    Debug,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -189,6 +192,9 @@ impl From<&Keyword> for &str {
             Keyword::Super => "super",
             Keyword::This => "this",
             Keyword::Var => "var",
+
+            #[cfg(feature = "debug")]
+            Keyword::Debug => "debug",
         }
     }
 }
@@ -214,6 +220,10 @@ impl TryFrom<&str> for Keyword {
             "super" => Ok(Keyword::Super),
             "this" => Ok(Keyword::This),
             "var" => Ok(Keyword::Var),
+
+            #[cfg(feature = "debug")]
+            "debug" => Ok(Keyword::Debug),
+
             _ => Err(()),
         }
     }

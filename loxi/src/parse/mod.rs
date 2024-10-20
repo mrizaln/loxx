@@ -21,6 +21,7 @@
 //!                 | for_stmt
 //!                 | if_stmt
 //!                 | print_stmt
+//!                 | debug_stmt        (enabled if features flag "debug" activated)
 //!                 | return_stmt
 //!                 | while_stmt
 //!                 | block ;
@@ -32,6 +33,8 @@
 //! if_stmt     -> "if" "(" expression ")" statement ( "else" statement )? ;
 //!
 //! print_stmt  -> "print" expression ";" ;
+//!
+//! debug_stmt  -> "debug" expression ";" ;
 //!
 //! while_stmt  -> "while" "(" expression ")" statement ;
 //!
@@ -423,6 +426,13 @@ impl Parser<'_> {
                 let loc = self.advance().unwrap().loc();
                 self.return_statement(loc)
             }
+
+            #[cfg(feature = "debug")]
+            is_tok!(Keyword::Debug) => {
+                let loc = self.advance().unwrap().loc();
+                self.debug_statement(loc)
+            }
+
             _ => self.expression_statement(),
         }
     }
@@ -434,6 +444,17 @@ impl Parser<'_> {
             _ => panic!("Should be expr"),
         };
         let stmt = Stmt::print(expr);
+        Ok(self.ast.add_stmt(stmt, loc))
+    }
+
+    #[cfg(feature = "debug")]
+    fn debug_statement(&mut self, loc: Location) -> StmtResult {
+        let stmt = self.expression_statement()?;
+        let expr = match &self.ast.get_stmt(&stmt).stmt {
+            Stmt::Expr { expr } => *expr,
+            _ => panic!("Should be expr"),
+        };
+        let stmt = Stmt::debug(expr);
         Ok(self.ast.add_stmt(stmt, loc))
     }
 

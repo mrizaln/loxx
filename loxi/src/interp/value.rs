@@ -267,10 +267,7 @@ impl Display for DisplayedValue<'_, '_, '_> {
             Value::Bool(b) => write!(f, "{b}"),
             Value::Number(num) => write!(f, "{num}"),
             Value::String(str) => write!(f, "{}", str.as_str()),
-
-            // TODO: show inheritance list
             Value::Class(class) => write!(f, "<class {}>", interner.resolve(class.name)),
-
             Value::Instance(instance) => write!(
                 f,
                 "<instance of:{} no:{}>",

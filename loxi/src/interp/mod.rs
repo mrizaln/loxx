@@ -266,6 +266,13 @@ impl Interpreter {
 
                 Ok(Unwind::None)
             }
+
+            #[cfg(feature = "debug")]
+            Stmt::Debug { expr } => {
+                let value = self.eval(expr)?;
+                eprintln!("{}", value.display(&self.interner, &self.ast));
+                Ok(Unwind::None)
+            }
         }
     }
 
