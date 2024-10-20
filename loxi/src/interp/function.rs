@@ -13,6 +13,8 @@ use super::value::ValueGen;
 use super::{env::Env, value::Value};
 use super::{Interpreter, RuntimeError};
 
+type NativeFn = fn(&Interpreter, &[Value], Location) -> Result<Value, FunctionError>;
+
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub enum Kind {
     Function,
@@ -24,8 +26,6 @@ pub enum Function {
     Native(Native),
     UserDefined(UserDefined),
 }
-
-type NativeFn = fn(&Interpreter, &[Value], Location) -> Result<Value, FunctionError>;
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct Native {

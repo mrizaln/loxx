@@ -1,4 +1,3 @@
-use std::fmt::{Debug, Display, Formatter};
 use std::iter::Peekable;
 use std::str::CharIndices;
 
@@ -6,84 +5,15 @@ use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
 
 use crate::interp::interner::{Interner, Key};
-use crate::util::{self, Location, LoxToken, TokLoc};
-use macros::tok;
+use crate::util::{self, Location, TokLoc};
+
+use self::macros::tok;
+use self::token::Token;
 
 pub mod token;
 
 #[cfg(test)]
 mod test;
-
-#[derive(Clone, Debug, PartialEq, PartialOrd)]
-pub enum Token {
-    Punctuation(TokLoc<token::Punctuation>),
-    Operator(TokLoc<token::Operator>),
-    Keyword(TokLoc<token::Keyword>),
-    Literal(TokLoc<token::Literal>),
-    Eof(Location),
-}
-
-pub struct DisplayedToken<'a, 'b> {
-    token: &'a Token,
-    interner: &'b Interner,
-}
-
-impl Token {
-    pub fn loc(&self) -> Location {
-        match self {
-            Token::Punctuation(tokl) => tokl.loc,
-            Token::Operator(tokl) => tokl.loc,
-            Token::Keyword(tokl) => tokl.loc,
-            Token::Literal(tokl) => tokl.loc,
-            Token::Eof(loc) => *loc,
-        }
-    }
-
-    pub fn static_str(&self) -> &'static str {
-        match self {
-            Token::Punctuation(TokLoc { tok, .. }) => tok.into(),
-            Token::Operator(TokLoc { tok, .. }) => tok.into(),
-            Token::Keyword(TokLoc { tok, .. }) => tok.into(),
-            Token::Literal(TokLoc { tok, .. }) => tok.into(),
-            Token::Eof(_) => "<eof>",
-        }
-    }
-
-    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedToken<'a, 'b> {
-        DisplayedToken {
-            token: self,
-            interner,
-        }
-    }
-}
-
-impl Display for DisplayedToken<'_, '_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let interner = self.interner;
-        match self.token {
-            Token::Literal(tokl) => {
-                let name = self.token.static_str();
-                let value = tokl.tok.display(interner);
-                write!(f, r#"{} Tok{{ "{}": "{}" }}"#, tokl.loc, name, value)
-            }
-            Token::Punctuation(tokl) => {
-                let name = tokl.tok.as_str();
-                write!(f, r#"{} Tok{{ "<punctuation>": "{}" }}"#, tokl.loc, name)
-            }
-            Token::Operator(tokl) => {
-                let name = tokl.tok.as_str();
-                write!(f, r#"{} Tok{{ "<operator>": "{}" }}"#, tokl.loc, name)
-            }
-            Token::Keyword(tokl) => {
-                let name = tokl.tok.as_str();
-                write!(f, r#"{} Tok{{ "<keyword>": "{}" }}"#, tokl.loc, name)
-            }
-            Token::Eof(loc) => {
-                write!(f, r#"{0} Tok{{ "{1}": "{1}" }}"#, loc, "<eof>")
-            }
-        }
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum LexError {
@@ -113,6 +43,14 @@ pub struct ScanResult<'a> {
     pub lines: Vec<&'a str>,
     pub tokens: Vec<Token>,
     pub errors: Vec<LexError>,
+}
+
+#[derive(Debug, Clone)]
+struct LineLocation {
+    pub index: usize,
+    pub start: usize,
+    pub column: usize, // the displayed column
+    pub char: char,
 }
 
 impl<'a, 'b> Lexer<'a, 'b> {
@@ -390,14 +328,6 @@ impl<'a, 'b> Lexer<'a, 'b> {
     fn if_next_is(&mut self, ch: char) -> bool {
         matches!(self.chars.peek(), Some((_, c)) if *c == ch)
     }
-}
-
-#[derive(Debug, Clone)]
-struct LineLocation {
-    pub index: usize,
-    pub start: usize,
-    pub column: usize, // the displayed column
-    pub char: char,
 }
 
 impl LineLocation {

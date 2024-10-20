@@ -6,8 +6,8 @@ use thiserror::Error;
 use crate::native_fn;
 use crate::parse::ast::Ast;
 use crate::parse::expr::{Expr, ExprId, ExprL, RefExpr, ValExpr};
-use crate::parse::stmt::{StmtFunctionL, StmtId, StmtL};
-use crate::parse::{stmt::Stmt, stmt::Unwind, token, Program};
+use crate::parse::stmt::{Stmt, StmtFunctionL, StmtId, StmtL, Unwind};
+use crate::parse::{token, Program};
 use crate::resolve::ResolveMap;
 use crate::util::Location;
 
@@ -50,6 +50,13 @@ pub enum RuntimeError {
     InheritNonClass(Location),
 }
 
+pub struct Interpreter {
+    dyn_env: DynamicEnv,
+    interner: Interner,
+    resolve_map: ResolveMap,
+    ast: Ast,
+}
+
 impl RuntimeError {
     pub fn loc(&self) -> Location {
         match self {
@@ -63,13 +70,6 @@ impl RuntimeError {
             RuntimeError::InheritNonClass(loc) => *loc,
         }
     }
-}
-
-pub struct Interpreter {
-    dyn_env: DynamicEnv,
-    interner: Interner,
-    resolve_map: ResolveMap,
-    ast: Ast,
 }
 
 impl Interpreter {

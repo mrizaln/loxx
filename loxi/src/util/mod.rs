@@ -23,12 +23,6 @@ impl<T: LoxToken> TokLoc<T> {
     }
 }
 
-impl Location {
-    pub(crate) fn new(line: usize, column: usize) -> Self {
-        Self { line, column }
-    }
-}
-
 impl Display for Location {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}:{}]", self.line, self.column)

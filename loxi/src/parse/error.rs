@@ -4,6 +4,16 @@ use crate::util::Location;
 
 use super::expr::Expr;
 
+pub trait ParseResultExt<T> {
+    fn map_syntax_err(self, expect: &'static str) -> Result<T, SyntaxError>;
+}
+
+#[derive(Debug)]
+pub enum ParseError {
+    SyntaxError(SyntaxError),
+    EndOfFile(Location),
+}
+
 #[derive(Debug, Error)]
 pub enum SyntaxError {
     #[error("{loc} SyntaxError: Expect '{expect}', got '{real}'")]
@@ -27,14 +37,41 @@ pub enum SyntaxError {
     },
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-    SyntaxError(SyntaxError),
-    EndOfFile(Location),
+impl<T> ParseResultExt<T> for Result<T, ParseError> {
+    fn map_syntax_err(self, expect: &'static str) -> Result<T, SyntaxError> {
+        self.map_err(|err| match err {
+            ParseError::SyntaxError(err) => err,
+            ParseError::EndOfFile(loc) => SyntaxError::expect(expect, "<eof>", loc),
+        })
+    }
 }
 
-pub trait ParseResultExt<T> {
-    fn map_syntax_err(self, expect: &'static str) -> Result<T, SyntaxError>;
+impl ParseError {
+    pub fn too_many_args(num: usize, loc: Location) -> ParseError {
+        ParseError::SyntaxError(SyntaxError::TooManyArguments {
+            num,
+            limit: Expr::MAX_FUNC_ARGS,
+            loc,
+        })
+    }
+
+    /// Convert the variant to ParseError::SyntaxError(SyntaxError::Expect)
+    pub fn as_syntax_err(self, expect: &'static str) -> SyntaxError {
+        match self {
+            ParseError::EndOfFile(loc) => SyntaxError::expect(expect, "<eof>", loc),
+            ParseError::SyntaxError(err) => err,
+        }
+    }
+
+    /// convert the variant to ParseError::SyntaxError(SyntaxError::MissingDelim)
+    pub fn missing_delim(self, delim: &'static str, start: Location) -> Self {
+        match self {
+            ParseError::EndOfFile(_) => {
+                ParseError::SyntaxError(SyntaxError::MissingDelim { start, delim })
+            }
+            _ => self,
+        }
+    }
 }
 
 impl SyntaxError {
@@ -67,45 +104,8 @@ impl SyntaxError {
     }
 }
 
-impl ParseError {
-    pub fn too_many_args(num: usize, loc: Location) -> ParseError {
-        ParseError::SyntaxError(SyntaxError::TooManyArguments {
-            num,
-            limit: Expr::MAX_FUNC_ARGS,
-            loc,
-        })
-    }
-
-    /// Convert the variant to ParseError::SyntaxError(SyntaxError::Expect)
-    pub fn as_syntax_err(self, expect: &'static str) -> SyntaxError {
-        match self {
-            ParseError::EndOfFile(loc) => SyntaxError::expect(expect, "<eof>", loc),
-            ParseError::SyntaxError(err) => err,
-        }
-    }
-
-    /// convert the variant to ParseError::SyntaxError(SyntaxError::MissingDelim)
-    pub fn missing_delim(self, delim: &'static str, start: Location) -> Self {
-        match self {
-            ParseError::EndOfFile(_) => {
-                ParseError::SyntaxError(SyntaxError::MissingDelim { start, delim })
-            }
-            _ => self,
-        }
-    }
-}
-
 impl From<SyntaxError> for ParseError {
     fn from(err: SyntaxError) -> Self {
         ParseError::SyntaxError(err)
-    }
-}
-
-impl<T> ParseResultExt<T> for Result<T, ParseError> {
-    fn map_syntax_err(self, expect: &'static str) -> Result<T, SyntaxError> {
-        self.map_err(|err| match err {
-            ParseError::SyntaxError(err) => err,
-            ParseError::EndOfFile(loc) => SyntaxError::expect(expect, "<eof>", loc),
-        })
     }
 }

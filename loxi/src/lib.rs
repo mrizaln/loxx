@@ -14,10 +14,10 @@ pub mod native_fn;
 pub mod parse;
 pub mod util;
 
+pub use interp::interner;
+
 mod interp;
 mod resolve;
-
-pub use interp::interner;
 
 #[macro_export]
 macro_rules! println_red {

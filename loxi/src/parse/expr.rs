@@ -1,11 +1,12 @@
 use std::fmt::Display;
 
-use super::ast::Ast;
-use super::token;
 use crate::interp::interner::Interner;
 use crate::util::{Location, LoxToken};
 
-use macros::*;
+use super::ast::Ast;
+use super::token;
+
+use self::macros::{ref_expr, val_expr};
 
 pub struct ExprL {
     pub expr: Expr,

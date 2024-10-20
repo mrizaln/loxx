@@ -11,13 +11,13 @@ pub enum VarBind {
     Def(Location),
 }
 
-pub enum ScopeError {
-    DuplicateDefine(Location),
-}
-
 #[derive(Debug)]
 pub struct Scope {
     stack: RefCell<Vec<FxHashMap<Key, VarBind>>>,
+}
+
+pub enum ScopeError {
+    DuplicateDefine(Location),
 }
 
 impl VarBind {

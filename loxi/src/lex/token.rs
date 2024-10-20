@@ -1,11 +1,25 @@
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 
 use strum::EnumIter;
 
 use crate::interp::interner::{Interner, Key};
-use crate::util::LoxToken;
+use crate::util::{Location, LoxToken, TokLoc};
 
 use self::macros::impl_token;
+
+#[derive(Clone, Debug, PartialEq, PartialOrd)]
+pub enum Token {
+    Punctuation(TokLoc<Punctuation>),
+    Operator(TokLoc<Operator>),
+    Keyword(TokLoc<Keyword>),
+    Literal(TokLoc<Literal>),
+    Eof(Location),
+}
+
+pub struct DisplayedToken<'a, 'b> {
+    token: &'a Token,
+    interner: &'b Interner,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Punctuation {
@@ -77,6 +91,63 @@ pub enum Special {
 }
 
 impl_token!(Punctuation, Operator, Keyword, Literal);
+
+impl Token {
+    pub fn loc(&self) -> Location {
+        match self {
+            Token::Punctuation(tokl) => tokl.loc,
+            Token::Operator(tokl) => tokl.loc,
+            Token::Keyword(tokl) => tokl.loc,
+            Token::Literal(tokl) => tokl.loc,
+            Token::Eof(loc) => *loc,
+        }
+    }
+
+    pub fn static_str(&self) -> &'static str {
+        match self {
+            Token::Punctuation(TokLoc { tok, .. }) => tok.into(),
+            Token::Operator(TokLoc { tok, .. }) => tok.into(),
+            Token::Keyword(TokLoc { tok, .. }) => tok.into(),
+            Token::Literal(TokLoc { tok, .. }) => tok.into(),
+            Token::Eof(_) => "<eof>",
+        }
+    }
+
+    pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedToken<'a, 'b> {
+        DisplayedToken {
+            token: self,
+            interner,
+        }
+    }
+}
+
+impl Display for DisplayedToken<'_, '_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let interner = self.interner;
+        match self.token {
+            Token::Literal(tokl) => {
+                let name = self.token.static_str();
+                let value = tokl.tok.display(interner);
+                write!(f, r#"{} Tok{{ "{}": "{}" }}"#, tokl.loc, name, value)
+            }
+            Token::Punctuation(tokl) => {
+                let name = tokl.tok.as_str();
+                write!(f, r#"{} Tok{{ "<punctuation>": "{}" }}"#, tokl.loc, name)
+            }
+            Token::Operator(tokl) => {
+                let name = tokl.tok.as_str();
+                write!(f, r#"{} Tok{{ "<operator>": "{}" }}"#, tokl.loc, name)
+            }
+            Token::Keyword(tokl) => {
+                let name = tokl.tok.as_str();
+                write!(f, r#"{} Tok{{ "<keyword>": "{}" }}"#, tokl.loc, name)
+            }
+            Token::Eof(loc) => {
+                write!(f, r#"{0} Tok{{ "{1}": "{1}" }}"#, loc, "<eof>")
+            }
+        }
+    }
+}
 
 impl Literal {
     pub fn display<'a, 'b>(&'a self, interner: &'b Interner) -> DisplayedLiteral<'a, 'b> {

@@ -82,18 +82,15 @@ use std::collections::VecDeque;
 use std::fmt::Display;
 
 use crate::interp::interner::{Interner, Key};
-use crate::lex::{self, token as ltok};
+use crate::lex::token::{self as ltok, Token as LToken};
 use crate::util::{Location, LoxToken, TokLoc};
-
-use expr::{Expr, RefExpr};
-use stmt::Stmt;
-
-use macros::{consume_identifier, consume_punctuation, is_tok, peek_no_eof};
 
 use self::ast::Ast;
 use self::error::{ParseError, ParseResultExt, SyntaxError};
-use self::expr::ExprId;
-use self::stmt::{StmtFunction, StmtFunctionId, StmtId};
+use self::expr::{Expr, ExprId, RefExpr};
+use self::stmt::{Stmt, StmtFunction, StmtFunctionId, StmtId};
+
+use self::macros::{consume_identifier, consume_punctuation, is_tok, peek_no_eof};
 
 pub mod ast;
 pub mod error;
@@ -104,15 +101,18 @@ pub mod token;
 #[cfg(test)]
 mod test;
 
+type ExprResult = Result<ExprId, ParseError>;
+type StmtResult = Result<StmtId, SyntaxError>;
+
 pub enum Mode {
     Script,
     Repl,
 }
 
 pub struct Parser<'a> {
-    tokens: VecDeque<lex::Token>,
+    tokens: VecDeque<LToken>,
     errors: Vec<SyntaxError>,
-    current: Option<lex::Token>,
+    current: Option<LToken>,
     ast: &'a mut Ast,
     mode: Mode,
 }
@@ -127,9 +127,6 @@ pub struct DisplayedProgram<'a, 'b, 'c> {
     ast: &'c Ast,
 }
 
-type ExprResult = Result<ExprId, ParseError>;
-type StmtResult = Result<StmtId, SyntaxError>;
-
 impl Parser<'_> {
     pub fn new(ast: &mut Ast, mode: Mode) -> Parser {
         Parser {
@@ -141,7 +138,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn parse(&mut self, tokens: Vec<lex::Token>) -> Result<Program, Vec<SyntaxError>> {
+    pub fn parse(&mut self, tokens: Vec<LToken>) -> Result<Program, Vec<SyntaxError>> {
         self.tokens = VecDeque::from(tokens);
 
         let mut statements = Vec::new();
@@ -666,7 +663,7 @@ impl Parser<'_> {
                 }
             }
 
-            lex::Token::Eof(_) => return Err(ParseError::EndOfFile(loc)),
+            LToken::Eof(_) => return Err(ParseError::EndOfFile(loc)),
             _ => Err(SyntaxError::expect("<expression>", curr.static_str(), loc))?,
         };
 
@@ -675,7 +672,7 @@ impl Parser<'_> {
 
     fn binary<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
     where
-        F1: Fn(&lex::Token) -> Option<TokLoc<token::BinaryOp>>,
+        F1: Fn(&LToken) -> Option<TokLoc<token::BinaryOp>>,
         F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
@@ -690,7 +687,7 @@ impl Parser<'_> {
 
     fn logical<F1, F2>(&mut self, curr: F1, inner: F2) -> ExprResult
     where
-        F1: Fn(&lex::Token) -> Option<TokLoc<token::LogicalOp>>,
+        F1: Fn(&LToken) -> Option<TokLoc<token::LogicalOp>>,
         F2: Fn(&mut Self) -> ExprResult,
     {
         let mut expr = inner(self)?;
@@ -703,20 +700,20 @@ impl Parser<'_> {
         Ok(expr)
     }
 
-    fn peek(&mut self) -> Result<&lex::Token, ParseError> {
+    fn peek(&mut self) -> Result<&LToken, ParseError> {
         match self.tokens.front() {
             // out of bound read is considered as EOF at invalid location [0:0]
             None => Err(ParseError::EndOfFile(Location::default())),
-            Some(lex::Token::Eof(loc)) => Err(ParseError::EndOfFile(*loc)),
+            Some(LToken::Eof(loc)) => Err(ParseError::EndOfFile(*loc)),
             Some(tok) => Ok(tok),
         }
     }
 
-    fn peek_no_eof(&mut self, expect: &'static str) -> Result<&lex::Token, SyntaxError> {
+    fn peek_no_eof(&mut self, expect: &'static str) -> Result<&LToken, SyntaxError> {
         self.peek().map_syntax_err(expect)
     }
 
-    fn advance(&mut self) -> Option<&lex::Token> {
+    fn advance(&mut self) -> Option<&LToken> {
         self.current = self.tokens.pop_front();
         self.current.as_ref()
     }
@@ -749,7 +746,7 @@ impl Display for DisplayedProgram<'_, '_, '_> {
 mod conv {
     use super::*;
 
-    pub fn to_equality(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+    pub fn to_equality(tok: &LToken) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             is_tok!(Operator::BangEqual) => token::BinaryOp::NotEqual,
             is_tok!(Operator::EqualEqual) => token::BinaryOp::Equal,
@@ -761,7 +758,7 @@ mod conv {
         })
     }
 
-    pub fn to_comparison(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+    pub fn to_comparison(tok: &LToken) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             is_tok!(Operator::Greater) => token::BinaryOp::Greater,
             is_tok!(Operator::GreaterEqual) => token::BinaryOp::GreaterEq,
@@ -775,7 +772,7 @@ mod conv {
         })
     }
 
-    pub fn to_term(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+    pub fn to_term(tok: &LToken) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             is_tok!(Operator::Plus) => token::BinaryOp::Add,
             is_tok!(Operator::Minus) => token::BinaryOp::Sub,
@@ -787,7 +784,7 @@ mod conv {
         })
     }
 
-    pub fn to_factor(tok: &lex::Token) -> Option<TokLoc<token::BinaryOp>> {
+    pub fn to_factor(tok: &LToken) -> Option<TokLoc<token::BinaryOp>> {
         let new_tok = match tok {
             is_tok!(Operator::Star) => token::BinaryOp::Mul,
             is_tok!(Operator::Slash) => token::BinaryOp::Div,
@@ -799,7 +796,7 @@ mod conv {
         })
     }
 
-    pub fn to_unary(tok: &lex::Token) -> Option<TokLoc<token::UnaryOp>> {
+    pub fn to_unary(tok: &LToken) -> Option<TokLoc<token::UnaryOp>> {
         let new_tok = match tok {
             is_tok!(Operator::Bang) => token::UnaryOp::Not,
             is_tok!(Operator::Minus) => token::UnaryOp::Minus,
@@ -811,16 +808,12 @@ mod conv {
         })
     }
 
-    pub fn to_logical(
-        tok: &lex::Token,
-        kind: token::LogicalOp,
-    ) -> Option<TokLoc<token::LogicalOp>> {
+    pub fn to_logical(tok: &LToken, kind: token::LogicalOp) -> Option<TokLoc<token::LogicalOp>> {
         let new_tok = match tok {
             is_tok!(Keyword::And) => token::LogicalOp::And,
             is_tok!(Keyword::Or) => token::LogicalOp::Or,
             _ => None?,
         };
-
         match new_tok == kind {
             true => Some(TokLoc {
                 tok: new_tok,
@@ -875,16 +868,16 @@ mod macros {
         }
     }
 
-    /// convenience macro for creating a `lex::Token::$name(TokLoc { tok: ltok::$name::$tok, .. })`
+    /// convenience macro for creating a `LToken::$name(TokLoc { tok: ltok::$name::$tok, .. })`
     macro_rules! is_tok {
         ($type:ident::$name:ident) => {
-            lex::Token::$type(TokLoc {
+            LToken::$type(TokLoc {
                 tok: ltok::$type::$name,
                 ..
             })
         };
         ($type:ident::$name:ident($tok:tt, $loc:tt)) => {
-            lex::Token::$type(TokLoc {
+            LToken::$type(TokLoc {
                 tok: ltok::$type::$name($tok),
                 loc: $loc,
             })

@@ -9,6 +9,8 @@ use super::function::{Function, Native, UserDefined};
 use super::interner::{Interner, Key};
 use super::RuntimeError;
 
+type OpResult = Result<Value, InvalidOp>;
+
 #[derive(Debug, PartialEq, PartialOrd)]
 pub enum Value {
     Nil,
@@ -22,8 +24,8 @@ pub enum Value {
     /// `StringLiteral` is a special case of string, the value is static.
     /// It can only produces real `String` if it was operated on.
     ///
-    /// NOTE: There is no distinction between `String` and string literal in Lox, this is just an
-    ///       optimization.
+    /// There is no distinction between `String` and string literal in Lox, this is just an
+    /// optimization.
     StringLiteral(Key),
 }
 
@@ -49,8 +51,6 @@ where
     gen: &'b mut F,
     index: usize,
 }
-
-type OpResult = Result<Value, InvalidOp>;
 
 impl Value {
     pub fn nil() -> Self {

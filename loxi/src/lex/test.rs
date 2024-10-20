@@ -18,7 +18,7 @@ fn hello_test() {
     assert_eq!(result.lines.len(), 2);
     assert_eq!(result.tokens.len(), 9);
 
-    let loc = Location::new;
+    let loc = |l, c| Location { line: l, column: c };
     let mut intern = |str| interner.get_or_intern(str);
 
     let tokens = vec![
