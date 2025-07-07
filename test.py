@@ -259,9 +259,7 @@ class Test:
 
     def run_all(self) -> Result:
         tests = TESTS[self.interpreter.value.variant]
-        printfl(
-            f"\n>>> Running {self.interpreter.value.name} tests", end=""
-        )
+        printfl(f"\n>>> Running {self.interpreter.value.name} tests", end="")
 
         done_tests: Dict[Path, bool] = {}
 
@@ -281,7 +279,7 @@ class Test:
 
                 if (done := done_tests.get(test)) is not None:
                     passed = Cs.g("PASSED") if done else Cs.r("FAILED")
-                    printfl(f"\t> {passed} {Cs.y("(cached)")}: {test}")
+                    printfl(f"\t> {passed} {Cs.y('(cached)')}: {test}")
                     if done:
                         result.passed += 1
                     else:
@@ -301,9 +299,7 @@ class Test:
         return result
 
     def run_chapter(self, chapter: Chapter) -> Result:
-        printfl(
-            f"\n>>> Running {self.interpreter.value.name} tests", end=""
-        )
+        printfl(f"\n>>> Running {self.interpreter.value.name} tests", end="")
         suite = self._suite_from_chapter(chapter)
         result = Result()
 
@@ -370,12 +366,12 @@ class Test:
             return False
 
         if self._validate(test, expect, stdout, stderr, returncode):
-            printfl(f"{Cm.u()}{Cs.g("PASSED ")}")
+            printfl(f"{Cm.u()}{Cs.g('PASSED')}         : ")
             if self.print_output:
                 pprint(stdout, stderr)
             return True
         else:
-            printfl(f"{Cm.u()}{Cs.r("FAILED ")}")
+            printfl(f"{Cm.u()}{Cs.r('FAILED')}         : ")
             [printfl(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
             pprint(stdout, stderr)
             return False
@@ -629,7 +625,7 @@ def prepare_interpreters() -> bool:
 
     printfl(Cs.y("Preparing interpreters..."), end=" ")
 
-    for interpreter in Interpreter:
+    for interpreter in [Interpreter.LOXI, Interpreter.LOXII]:
         name = interpreter.value.name.lower()
         try:
             run(
