@@ -122,8 +122,10 @@ pub fn run(interpreter: &mut Interpreter, program: &str, mode: Mode) -> Result<(
     // resolving
     let mut resolver = Resolver::new(interner, ast);
     let resolve_map = resolver.resolve(&program).map_err(|err| {
-        eprint_context(&lines, err.loc());
-        eprintln_red!("{}", err);
+        err.iter().for_each(|e| {
+            eprint_context(&lines, e.loc());
+            eprintln_red!("{}", e);
+        });
         LoxError::ResolveError
     })?;
 

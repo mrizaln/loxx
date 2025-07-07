@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::fmt::Display;
 use std::mem;
 
@@ -19,7 +20,8 @@ mod scope;
 pub struct Resolver<'a, 'b> {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
-    func_context: FunctionContext, // track if we are in a function or not, acts like a stack
+    global_refs: RefCell<FxHashMap<Key, ExprId>>, // track global references (may be undefined)
+    func_context: FunctionContext,
     class_context: ClassContext,
     interner: &'a Interner,
     ast: &'b Ast,
@@ -63,6 +65,9 @@ pub enum ResolveError {
 
     #[error("{0} SyntaxError: Can't return a value from initializer")]
     FobiddenReturn(Location),
+
+    #[error("{0} LogicError: Trying to access undefined variable: '{1}'")]
+    UndefinedVariable(Location, String),
 }
 
 #[derive(Default)]
@@ -75,6 +80,7 @@ impl Resolver<'_, '_> {
         Resolver {
             scope: Scope::new_empty(),
             resolved_expr: FxHashMap::default(),
+            global_refs: RefCell::default(),
             func_context: FunctionContext::None,
             class_context: ClassContext::None,
             interner,
@@ -84,10 +90,31 @@ impl Resolver<'_, '_> {
 
     /// Can resolve multiple times and every time it resolves it will update its internal state and
     /// return a new but updated `ResolveMap`. Useful for REPLs.
-    pub fn resolve(&mut self, program: &Program) -> Result<ResolveMap, ResolveError> {
+    pub fn resolve(&mut self, program: &Program) -> Result<ResolveMap, Vec<ResolveError>> {
         for stmt in program.statements.iter() {
-            self.resolve_stmt(stmt)?;
+            if let Err(e) = self.resolve_stmt(stmt) {
+                return Err(vec![e]);
+            }
         }
+
+        // check whether global references reference to valid defined variables
+        let mut global_refs = self.global_refs.take();
+        for global in self.scope.globals() {
+            global_refs.remove_entry(&global);
+        }
+
+        if !global_refs.is_empty() {
+            return Err(global_refs
+                .into_iter()
+                .map(|(k, v)| {
+                    ResolveError::UndefinedVariable(
+                        self.ast.get_expr(&v).loc,
+                        self.interner.resolve(k).to_owned(),
+                    )
+                })
+                .collect());
+        }
+
         Ok(ResolveMap {
             resolved_expr: self
                 .resolved_expr
@@ -147,10 +174,11 @@ impl Resolver<'_, '_> {
             Stmt::Return { value } => {
                 match self.func_context {
                     FunctionContext::None => Err(ResolveError::StrayReturn(*loc))?,
-                    FunctionContext::Constructor => match value {
-                        Some(_) => Err(ResolveError::FobiddenReturn(*loc))?,
-                        None => (),
-                    },
+                    FunctionContext::Constructor => {
+                        if value.is_some() {
+                            Err(ResolveError::FobiddenReturn(*loc))?
+                        }
+                    }
                     _ => (),
                 };
                 match value {
@@ -271,7 +299,7 @@ impl Resolver<'_, '_> {
                 Ok(())
             }
             RefExpr::Get { object, prop: _ } => {
-                // NOTE: prop are looked up dynamically
+                // prop are looked up dynamically
                 self.resolve_expr(object)
             }
             RefExpr::Set {
@@ -293,7 +321,7 @@ impl Resolver<'_, '_> {
                 ClassContext::None => Err(ResolveError::StraySuper(loc)),
                 ClassContext::Class => Err(ResolveError::NonInheritingSuper(loc)),
                 _ => {
-                    // NOTE: prop are looked up dynamically
+                    // prop are looked up dynamically
                     let superr = self.interner.key_super;
                     self.resolve_local(*id, superr);
                     Ok(())
@@ -314,6 +342,7 @@ impl Resolver<'_, '_> {
             }
             None => {
                 // if we can't find the variable we assume it's global
+                self.global_refs.borrow_mut().insert(name, expr_id);
             }
         }
     }
@@ -348,25 +377,26 @@ impl Resolver<'_, '_> {
     }
 
     fn declare_var(&self, name: Key, loc: Location) -> Result<(), ResolveError> {
-        // variables declared at global scope are not resolved
-        if self.scope.is_empty() {
-            return Ok(());
-        }
-        self.scope
-            .define(name, VarBind::Decl(loc))
-            .map_err(|err| match err {
-                ScopeError::DuplicateDefine(prev) => ResolveError::DuplicateDeclaration(loc, prev),
-            })
+        let define = match self.scope.is_empty() {
+            true => Scope::define_global,
+            false => Scope::define,
+        };
+        define(&self.scope, name, VarBind::Decl(loc)).map_err(|err| match err {
+            ScopeError::DuplicateDefine(prev) => ResolveError::DuplicateDeclaration(loc, prev),
+        })
     }
 
     fn define_var(&self, name: Key, loc: Location) {
-        // variables declared at global scope are not resolved
-        if self.scope.is_empty() {
-            return;
-        }
-        match self.scope.get_current(name) {
+        let get = match self.scope.is_empty() {
+            true => Scope::get_global,
+            false => Scope::get_current,
+        };
+        match get(&self.scope, name) {
             Some(mut val) => *val = VarBind::Def(loc),
             None => panic!("variable not declared first, programmer error"),
+        }
+        if self.scope.is_empty() {
+            self.global_refs.borrow_mut().remove_entry(&name);
         }
     }
 }
@@ -382,6 +412,7 @@ impl ResolveError {
             ResolveError::ClassInheritItself(loc) => *loc,
             ResolveError::StraySuper(loc) => *loc,
             ResolveError::NonInheritingSuper(loc) => *loc,
+            ResolveError::UndefinedVariable(loc, _) => *loc,
         }
     }
 }

@@ -99,11 +99,8 @@ impl Interpreter {
     ) -> Result<(), RuntimeError> {
         std::mem::swap(&mut self.resolve_map, &mut resolve_map);
         for stmt in program.statements.iter() {
-            match self.execute(stmt)? {
-                Unwind::None => (),
-                Unwind::Return(_) => {
-                    unreachable!("stray return detection should have been handled in Resolver!")
-                }
+            if let Unwind::Return(_) = self.execute(stmt)? {
+                unreachable!("stray return detection should have been handled in Resolver!")
             }
         }
         Ok(())

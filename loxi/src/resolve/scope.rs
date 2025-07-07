@@ -14,6 +14,7 @@ pub enum VarBind {
 #[derive(Debug)]
 pub struct Scope {
     stack: RefCell<Vec<FxHashMap<Key, VarBind>>>,
+    globals: RefCell<FxHashMap<Key, VarBind>>,
 }
 
 pub enum ScopeError {
@@ -33,6 +34,7 @@ impl Scope {
     pub fn new_empty() -> Self {
         Self {
             stack: RefCell::new(vec![]),
+            globals: RefCell::default(),
         }
     }
 
@@ -60,6 +62,12 @@ impl Scope {
         }
     }
 
+    // globals is allowed to be redefined
+    pub fn define_global(&self, key: Key, value: VarBind) -> Result<(), ScopeError> {
+        self.globals.borrow_mut().insert(key, value);
+        Ok(())
+    }
+
     pub fn get_at(&self, key: Key, distance: usize) -> Option<RefMut<'_, VarBind>> {
         if distance > self.index() {
             panic!(
@@ -79,6 +87,10 @@ impl Scope {
         self.get_at(key, 0)
     }
 
+    pub fn get_global(&self, key: Key) -> Option<RefMut<'_, VarBind>> {
+        RefMut::filter_map(self.globals.borrow_mut(), |m| m.get_mut(&key)).ok()
+    }
+
     // get the value of the key and the distance from the current scope
     pub fn get(&self, key: Key) -> Option<(RefMut<'_, VarBind>, usize)> {
         for i in 0..=self.index() {
@@ -87,6 +99,10 @@ impl Scope {
             }
         }
         None
+    }
+
+    pub fn globals(&self) -> Vec<Key> {
+        self.globals.borrow().iter().map(|(k, _)| *k).collect()
     }
 
     fn get_map(&self, distance: usize) -> RefMut<'_, FxHashMap<Key, VarBind>> {
