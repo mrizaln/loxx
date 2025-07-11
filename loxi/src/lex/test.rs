@@ -18,7 +18,7 @@ fn hello_test() {
     assert_eq!(result.lines.len(), 2);
     assert_eq!(result.tokens.len(), 9);
 
-    let loc = |l, c| Location { line: l, column: c };
+    let loc = |l, c| Loc { line: l, column: c };
     let mut intern = |str| interner.get_or_intern(str);
 
     let tokens = vec![
@@ -30,7 +30,7 @@ fn hello_test() {
         tok! { [loc(2,1)]  -> Keyword::Print },
         tok! { [loc(2,7)]  -> Literal::Identifier = intern("hello") },
         tok! { [loc(2,12)] -> Punctuation::Semicolon },
-        Token::Eof(Location { line: 3, column: 1 }),
+        Token::Eof(Loc { line: 3, column: 1 }),
     ];
 
     for (t1, t2) in result.tokens.iter().zip(tokens) {

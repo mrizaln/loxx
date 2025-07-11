@@ -3,7 +3,7 @@ use std::cell::{RefCell, RefMut};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::interp::interner::Key;
-use crate::util::Location;
+use crate::util::Loc;
 
 #[derive(Debug)]
 struct Info {
@@ -14,7 +14,7 @@ struct Info {
 
 #[derive(Debug)]
 pub struct Captures {
-    pub inner: FxHashSet<(Key, Location)>,
+    pub inner: FxHashSet<(Key, Loc)>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,8 +39,8 @@ pub enum Kind {
 
 #[derive(Debug)]
 pub enum Bind {
-    Decl(Location),
-    Def(Location),
+    Decl(Loc),
+    Def(Loc),
 }
 
 #[derive(Debug)]
@@ -50,11 +50,11 @@ pub struct Scope {
 }
 
 pub enum ScopeError {
-    DuplicateDefine(Location),
+    DuplicateDefine(Loc),
 }
 
 impl Bind {
-    pub fn loc(&self) -> Location {
+    pub fn loc(&self) -> Loc {
         match self {
             Bind::Decl(loc) => *loc,
             Bind::Def(loc) => *loc,

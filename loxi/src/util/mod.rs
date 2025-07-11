@@ -7,29 +7,29 @@ pub trait LoxToken {
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 pub struct TokLoc<T: LoxToken> {
     pub tok: T,
-    pub loc: Location,
+    pub loc: Loc,
 }
 
 // TODO: add other information like filename
 #[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub struct Location {
+pub struct Loc {
     pub line: usize,
     pub column: usize,
 }
 
 impl<T: LoxToken> TokLoc<T> {
-    pub fn new(tok: T, loc: Location) -> Self {
+    pub fn new(tok: T, loc: Loc) -> Self {
         Self { tok, loc }
     }
 }
 
-impl Display for Location {
+impl Display for Loc {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}:{}]", self.line, self.column)
     }
 }
 
-impl Debug for Location {
+impl Debug for Loc {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Display::fmt(self, f)
     }

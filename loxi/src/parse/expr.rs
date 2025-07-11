@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use crate::interp::interner::Interner;
-use crate::util::{Location, LoxToken};
+use crate::util::{Loc, LoxToken};
 
 use super::ast::Ast;
 use super::token;
@@ -10,7 +10,7 @@ use self::macros::{ref_expr, val_expr};
 
 pub struct ExprL {
     pub expr: Expr,
-    pub loc: Location,
+    pub loc: Loc,
 }
 
 pub enum Expr {

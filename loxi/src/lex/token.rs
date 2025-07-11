@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use strum::EnumIter;
 
 use crate::interp::interner::{Interner, Key};
-use crate::util::{Location, LoxToken, TokLoc};
+use crate::util::{Loc, LoxToken, TokLoc};
 
 use self::macros::impl_token;
 
@@ -13,7 +13,7 @@ pub enum Token {
     Operator(TokLoc<Operator>),
     Keyword(TokLoc<Keyword>),
     Literal(TokLoc<Literal>),
-    Eof(Location),
+    Eof(Loc),
 }
 
 pub struct DisplayedToken<'a, 'b> {
@@ -93,7 +93,7 @@ pub enum Special {
 impl_token!(Punctuation, Operator, Keyword, Literal);
 
 impl Token {
-    pub fn loc(&self) -> Location {
+    pub fn loc(&self) -> Loc {
         match self {
             Token::Punctuation(tokl) => tokl.loc,
             Token::Operator(tokl) => tokl.loc,

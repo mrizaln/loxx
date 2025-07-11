@@ -9,7 +9,7 @@ use crate::parse::expr::{Expr, ExprId, ExprL, RefExpr, ValExpr};
 use crate::parse::stmt::{Stmt, StmtFunctionL, StmtId, StmtL, Unwind};
 use crate::parse::{token, Program};
 use crate::resolve::ResolveMap;
-use crate::util::Location;
+use crate::util::Loc;
 
 use self::class::{Class, Property};
 use self::env::DynamicEnv;
@@ -26,28 +26,28 @@ pub mod value;
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("{0} RuntimeError: Invalid binary operation '{1}' between '{2}' and '{3}'")]
-    InvalidBinaryOp(Location, token::BinaryOp, &'static str, &'static str),
+    InvalidBinaryOp(Loc, token::BinaryOp, &'static str, &'static str),
 
     #[error("{0} RuntimeError: Invalid unary operation '{1}' on '{2}'")]
-    InvalidUnaryOp(Location, token::UnaryOp, &'static str),
+    InvalidUnaryOp(Loc, token::UnaryOp, &'static str),
 
     #[error("{0} RuntimeError: Trying to access undefined variable: '{1}'")]
-    UndefinedVariable(Location, String),
+    UndefinedVariable(Loc, String),
 
     #[error("{0}")]
     FunctionError(#[from] function::FunctionError),
 
     #[error("{0} RuntimeError: Trying to access a property on a non-instance object")]
-    InvalidPropertyAccess(Location),
+    InvalidPropertyAccess(Loc),
 
     #[error("{0} RuntimeError: Trying to access an undefined property")]
-    UndefinedProperty(Location),
+    UndefinedProperty(Loc),
 
     #[error("{0} RuntimeError: Not a function or a callable object")]
-    NotCallable(Location),
+    NotCallable(Loc),
 
     #[error("{0} RuntimeError: Inherit target must be a class")]
-    InheritNonClass(Location),
+    InheritNonClass(Loc),
 }
 
 pub struct Interpreter {
@@ -58,7 +58,7 @@ pub struct Interpreter {
 }
 
 impl RuntimeError {
-    pub fn loc(&self) -> Location {
+    pub fn loc(&self) -> Loc {
         match self {
             RuntimeError::InvalidBinaryOp(loc, _, _, _) => *loc,
             RuntimeError::InvalidUnaryOp(loc, _, _) => *loc,
@@ -281,7 +281,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_val(&self, expr: &ValExpr, loc: Location) -> Result<Value, RuntimeError> {
+    fn eval_val(&self, expr: &ValExpr, loc: Loc) -> Result<Value, RuntimeError> {
         match expr {
             ValExpr::Literal { value } => match value {
                 token::Literal::Number(num) => Ok(Value::number(*num)),
@@ -360,7 +360,7 @@ impl Interpreter {
         }
     }
 
-    fn eval_ref(&self, expr: &RefExpr, id: ExprId, loc: Location) -> Result<Value, RuntimeError> {
+    fn eval_ref(&self, expr: &RefExpr, id: ExprId, loc: Loc) -> Result<Value, RuntimeError> {
         match expr {
             RefExpr::Variable { var } => self.lookup_var(id, var.name).ok_or_else(|| {
                 let var_name = self.interner.resolve(var.name);

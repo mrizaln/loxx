@@ -5,7 +5,7 @@ use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
 
 use crate::interp::interner::{Interner, Key};
-use crate::util::{self, Location, TokLoc};
+use crate::util::{self, Loc, TokLoc};
 
 use self::macros::tok;
 use self::token::Token;
@@ -18,13 +18,13 @@ mod test;
 #[derive(Debug, Error)]
 pub enum LexError {
     #[error("{0} Unknown token ({1}) [{2:#x}]")]
-    UnknownToken(Location, char, u32),
+    UnknownToken(Loc, char, u32),
 
     #[error("{0} Unterminated string")]
-    UnterminatedString(Location),
+    UnterminatedString(Loc),
 
     #[error("{0} Unable to parse Number '{1}'")]
-    UnableToParseNumber(Location, String),
+    UnableToParseNumber(Loc, String),
 }
 
 #[derive(Debug)]
@@ -331,8 +331,8 @@ impl<'a, 'b> Lexer<'a, 'b> {
 }
 
 impl LineLocation {
-    pub fn to_loc(&self) -> Location {
-        Location {
+    pub fn to_loc(&self) -> Loc {
+        Loc {
             line: self.index,
             column: self.column - self.char.width().unwrap_or(0) + 1,
         }

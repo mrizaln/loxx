@@ -5,7 +5,7 @@ use crate::interp::interner::Interner;
 use crate::lex::Lexer;
 use crate::parse::ast::Ast;
 use crate::parse::Parser;
-use crate::util::Location;
+use crate::util::Loc;
 
 use super::{expr::*, stmt::*, token};
 
@@ -22,7 +22,7 @@ fn get_reference_ast(ast: &mut Ast) -> ExprId {
 
     type Lit = token::Literal;
     let lit = Expr::literal;
-    let loc = |l, c| Location { line: l, column: c };
+    let loc = |l, c| Loc { line: l, column: c };
 
     let lit2 = ast.add_expr(lit(Lit::Number(2.0)), loc(1, 6));
     let lit3 = ast.add_expr(lit(Lit::Number(3.0)), loc(1, 10));

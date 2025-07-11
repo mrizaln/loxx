@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::parse::expr::ExprId;
 use crate::parse::stmt::{Stmt, StmtFunctionId, StmtFunctionL, Unwind};
-use crate::util::Location;
+use crate::util::Loc;
 
 use super::class::Instance;
 use super::interner::{Interner, Key};
@@ -13,7 +13,7 @@ use super::value::ValueGen;
 use super::{env::Env, value::Value};
 use super::{Interpreter, RuntimeError};
 
-type NativeFn = fn(&Interpreter, &[Value], Location) -> Result<Value, FunctionError>;
+type NativeFn = fn(&Interpreter, &[Value], Loc) -> Result<Value, FunctionError>;
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 pub enum Kind {
@@ -44,15 +44,11 @@ pub struct UserDefined {
 #[derive(Debug, Error)]
 pub enum FunctionError {
     #[error("{loc} RuntimeError: Mismatched number of arguments. Expected {expect} argument(s) got {got} instead")]
-    MismatchedArgument {
-        loc: Location,
-        expect: usize,
-        got: usize,
-    },
+    MismatchedArgument { loc: Loc, expect: usize, got: usize },
 
     #[error("{loc} RuntimeError: Invalid argument type for native function. Expected {expect} got {got} instead")]
     NativeArgumentError {
-        loc: Location,
+        loc: Loc,
         expect: &'static str,
         got: &'static str,
     },
@@ -71,7 +67,7 @@ impl Native {
         &self,
         interpreter: &Interpreter,
         args: ValueGen<'_, '_, F>,
-        loc: Location,
+        loc: Loc,
     ) -> Result<Value, RuntimeError>
     where
         F: Fn(ExprId) -> Result<Value, RuntimeError>,
@@ -103,7 +99,7 @@ impl UserDefined {
         &self,
         interpreter: &Interpreter,
         args: ValueGen<'_, '_, F>,
-        loc: Location,
+        loc: Loc,
     ) -> Result<Value, RuntimeError>
     where
         F: Fn(ExprId) -> Result<Value, RuntimeError>,
@@ -182,7 +178,7 @@ impl PartialOrd for UserDefined {
 }
 
 impl FunctionError {
-    pub fn loc(&self) -> Location {
+    pub fn loc(&self) -> Loc {
         match self {
             FunctionError::MismatchedArgument { loc, .. } => *loc,
             FunctionError::NativeArgumentError { loc, .. } => *loc,

@@ -1,5 +1,5 @@
 use crate::interner::Key;
-use crate::util::Location;
+use crate::util::Loc;
 
 use super::expr::{Expr, ExprId, ExprL};
 use super::stmt::{Stmt, StmtFunction, StmtFunctionId, StmtFunctionL, StmtId, StmtL};
@@ -19,25 +19,25 @@ impl Ast {
         }
     }
 
-    pub fn add_expr(&mut self, expr: Expr, loc: Location) -> ExprId {
+    pub fn add_expr(&mut self, expr: Expr, loc: Loc) -> ExprId {
         let id = self.expressions.len();
         self.expressions.push(ExprL { expr, loc });
         ExprId::new(id)
     }
 
-    pub fn add_stmt(&mut self, stmt: Stmt, loc: Location) -> StmtId {
+    pub fn add_stmt(&mut self, stmt: Stmt, loc: Loc) -> StmtId {
         let id = self.statements.len();
         self.statements.push(StmtL { stmt, loc });
         StmtId::new(id)
     }
 
-    pub fn add_func(&mut self, func: StmtFunction, loc: Location) -> StmtFunctionId {
+    pub fn add_func(&mut self, func: StmtFunction, loc: Loc) -> StmtFunctionId {
         let id = self.functions.len();
         self.functions.push(StmtFunctionL { func, loc });
         StmtFunctionId::new(id)
     }
 
-    pub fn func_add_captures(&mut self, id: &StmtFunctionId, captures: Vec<(Key, Location)>) {
+    pub fn func_add_captures(&mut self, id: &StmtFunctionId, captures: Vec<(Key, Loc)>) {
         self.functions[id.inner()].func.captures = captures;
     }
 

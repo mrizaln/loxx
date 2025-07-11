@@ -1,8 +1,8 @@
 use crate::interp::{function::FunctionError, value::Value, Interpreter};
-use crate::util::Location;
+use crate::util::Loc;
 
 /// Return the current time in seconds since the Unix epoch.
-pub fn clock(_: &Interpreter, _args: &[Value], _: Location) -> Result<Value, FunctionError> {
+pub fn clock(_: &Interpreter, _args: &[Value], _: Loc) -> Result<Value, FunctionError> {
     assert_eq!(_args.len(), 0);
 
     let now = std::time::SystemTime::now();
@@ -25,7 +25,7 @@ pub mod loxlox {
     use super::*;
 
     /// Read a single character from standard input, encoded as `Value::Number`.
-    pub fn getc(_: &Interpreter, _args: &[Value], _: Location) -> Result<Value, FunctionError> {
+    pub fn getc(_: &Interpreter, _args: &[Value], _: Loc) -> Result<Value, FunctionError> {
         assert_eq!(_args.len(), 0);
 
         // FIXME: properly handle utf8!
@@ -38,7 +38,7 @@ pub mod loxlox {
     }
 
     /// Convert ASCII code point to a string.
-    pub fn chr(_: &Interpreter, args: &[Value], loc: Location) -> Result<Value, FunctionError> {
+    pub fn chr(_: &Interpreter, args: &[Value], loc: Loc) -> Result<Value, FunctionError> {
         assert_eq!(args.len(), 1);
 
         // FIXME: properly handle utf8!
@@ -54,7 +54,7 @@ pub mod loxlox {
     }
 
     /// Exit the program with a given exit code.
-    pub fn exit(_: &Interpreter, args: &[Value], loc: Location) -> Result<Value, FunctionError> {
+    pub fn exit(_: &Interpreter, args: &[Value], loc: Loc) -> Result<Value, FunctionError> {
         assert_eq!(args.len(), 1);
 
         let code = arg_match!(&args[0] => Number; ["<number>", loc]);
@@ -68,7 +68,7 @@ pub mod loxlox {
     pub fn print_error(
         interp: &Interpreter,
         args: &[Value],
-        _: Location,
+        _: Loc,
     ) -> Result<Value, FunctionError> {
         assert_eq!(args.len(), 1);
 

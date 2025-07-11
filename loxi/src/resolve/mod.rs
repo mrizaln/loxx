@@ -10,7 +10,7 @@ use crate::parse::ast::Ast;
 use crate::parse::expr::{ExprId, ExprL, RefExpr, ValExpr};
 use crate::parse::stmt::{StmtFunctionId, StmtFunctionL, StmtId, StmtL};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
-use crate::util::Location;
+use crate::util::Loc;
 
 use self::scope::{Bind, Captures, Class, Fun, Kind, Scope, ScopeError};
 
@@ -28,31 +28,31 @@ pub struct Resolver<'a, 'b> {
 #[derive(Debug, Error)]
 pub enum ResolveError {
     #[error("{0} SyntaxError: Variable is used in its own initializer")]
-    VariableInInitializer(Location),
+    VariableInInitializer(Loc),
 
     #[error("{0} SyntaxError: A class that inherits from itself doesn't make sense")]
-    ClassInheritItself(Location),
+    ClassInheritItself(Loc),
 
     #[error("{0} SyntaxError: Variable with the same name already defined at {1}")]
-    DuplicateDeclaration(Location, Location),
+    DuplicateDeclaration(Loc, Loc),
 
     #[error("{0} SyntaxError: Stray return statement outside of function")]
-    StrayReturn(Location),
+    StrayReturn(Loc),
 
     #[error("{0} SyntaxError: Stray 'this' outside of a class")]
-    StrayThis(Location),
+    StrayThis(Loc),
 
     #[error("{0} SyntaxError: Can't have a 'super' outside of a class")]
-    StraySuper(Location),
+    StraySuper(Loc),
 
     #[error("{0} SyntaxError: Can't have a 'super' inside a non-inheriting class")]
-    NonInheritingSuper(Location),
+    NonInheritingSuper(Loc),
 
     #[error("{0} SyntaxError: Can't return a value from initializer")]
-    FobiddenReturn(Location),
+    FobiddenReturn(Loc),
 
     #[error("{0} LogicError: Trying to access undefined variable: '{1}'")]
-    UndefinedVariable(Location, String),
+    UndefinedVariable(Loc, String),
 }
 
 #[derive(Default)]
@@ -62,7 +62,7 @@ pub struct ResolveMap {
 
 #[derive(Default)]
 pub struct CapturesList {
-    pub list: Vec<(StmtFunctionId, Vec<(Key, Location)>)>,
+    pub list: Vec<(StmtFunctionId, Vec<(Key, Loc)>)>,
 }
 
 impl Resolver<'_, '_> {
@@ -71,7 +71,7 @@ impl Resolver<'_, '_> {
         let mut define = |name: &str| {
             let name = interner.get_or_intern(name);
             scope
-                .define_global(name, Bind::Def(Location::default()))
+                .define_global(name, Bind::Def(Loc::default()))
                 .ok()
                 .unwrap();
         };
@@ -293,7 +293,7 @@ impl Resolver<'_, '_> {
         &mut self,
         expr: &RefExpr,
         id: &ExprId,
-        loc: Location,
+        loc: Loc,
     ) -> Result<(), ResolveError> {
         match expr {
             RefExpr::Variable { var } => {
@@ -362,7 +362,7 @@ impl Resolver<'_, '_> {
 
     fn resolve_function(
         &mut self,
-        params: &[(Key, Location)],
+        params: &[(Key, Loc)],
         body: &[StmtId],
         kind: Fun,
     ) -> Result<Captures, ResolveError> {
@@ -378,13 +378,13 @@ impl Resolver<'_, '_> {
         Ok(self.scope.drop_scope())
     }
 
-    fn declare_and_define_var(&mut self, name: Key, loc: Location) -> Result<(), ResolveError> {
+    fn declare_and_define_var(&mut self, name: Key, loc: Loc) -> Result<(), ResolveError> {
         self.declare_var(name, loc)?;
         self.define_var(name, loc);
         Ok(())
     }
 
-    fn declare_var(&mut self, name: Key, loc: Location) -> Result<(), ResolveError> {
+    fn declare_var(&mut self, name: Key, loc: Loc) -> Result<(), ResolveError> {
         let define = match self.scope.is_empty() {
             true => Scope::define_global,
             false => Scope::define,
@@ -394,7 +394,7 @@ impl Resolver<'_, '_> {
         })
     }
 
-    fn define_var(&mut self, name: Key, loc: Location) {
+    fn define_var(&mut self, name: Key, loc: Loc) {
         let get = match self.scope.is_empty() {
             true => Scope::get_global,
             false => Scope::get_current,
@@ -410,7 +410,7 @@ impl Resolver<'_, '_> {
 }
 
 impl ResolveError {
-    pub fn loc(&self) -> Location {
+    pub fn loc(&self) -> Loc {
         match self {
             ResolveError::VariableInInitializer(loc) => *loc,
             ResolveError::DuplicateDeclaration(loc, _) => *loc,

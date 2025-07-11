@@ -7,7 +7,7 @@ use self::interp::Interpreter;
 use self::lex::{Lexer, ScanResult};
 use self::parse::Parser;
 use self::resolve::Resolver;
-use self::util::Location;
+use self::util::Loc;
 
 pub mod lex;
 pub mod native_fn;
@@ -207,7 +207,7 @@ pub fn run_prompt() -> io::Result<()> {
 }
 
 #[rustfmt::skip]
-pub fn eprint_context(lines: &[&str], loc: Location) {
+pub fn eprint_context(lines: &[&str], loc: Loc) {
     let line = match loc.line > lines.len() {
         true => "",
         false => lines[loc.line - 1],

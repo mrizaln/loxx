@@ -5,7 +5,7 @@ use std::rc::Rc;
 use rustc_hash::FxHashMap;
 
 use crate::parse::expr::ExprId;
-use crate::util::Location;
+use crate::util::Loc;
 
 use super::function::{FunctionError, UserDefined};
 use super::interner::{Interner, Key};
@@ -18,7 +18,7 @@ pub struct Class {
     pub base: Option<Rc<Class>>,
     pub constructor: Option<UserDefined>, // constructor is not simply a method
     pub methods: FxHashMap<Key, UserDefined>,
-    pub loc: Location,
+    pub loc: Loc,
     counter: RefCell<usize>,
 }
 
@@ -41,7 +41,7 @@ impl Class {
         base: Option<Rc<Class>>,
         constructor: Option<UserDefined>,
         methods: FxHashMap<Key, UserDefined>,
-        loc: Location,
+        loc: Loc,
     ) -> Self {
         Self {
             name,
@@ -55,7 +55,7 @@ impl Class {
 
     pub fn construct<F>(
         self: &Rc<Self>,
-        loc: Location,
+        loc: Loc,
         interpreter: &Interpreter,
         args: ValueGen<'_, '_, F>,
     ) -> Result<Rc<Instance>, RuntimeError>

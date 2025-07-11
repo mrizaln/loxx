@@ -83,7 +83,7 @@ use std::fmt::Display;
 
 use crate::interp::interner::{Interner, Key};
 use crate::lex::token::{self as ltok, Token as LToken};
-use crate::util::{Location, LoxToken, TokLoc};
+use crate::util::{Loc, LoxToken, TokLoc};
 
 use self::ast::Ast;
 use self::error::{ParseError, ParseResultExt, SyntaxError};
@@ -207,7 +207,7 @@ impl Parser<'_> {
         }
     }
 
-    fn class_declaration(&mut self, loc: Location) -> StmtResult {
+    fn class_declaration(&mut self, loc: Loc) -> StmtResult {
         let (name, _) = consume_identifier!(self)?;
 
         let base = match self.peek_no_eof("< or {")? {
@@ -239,10 +239,10 @@ impl Parser<'_> {
         Ok(self.ast.add_stmt(class, loc))
     }
 
-    fn function_declaration(&mut self, loc: Location) -> Result<StmtFunctionId, SyntaxError> {
+    fn function_declaration(&mut self, loc: Loc) -> Result<StmtFunctionId, SyntaxError> {
         let (name, _) = consume_identifier!(self)?;
         consume_punctuation!(self, ParenLeft)?;
-        let mut params = Vec::<(Key, Location)>::new();
+        let mut params = Vec::<(Key, Loc)>::new();
 
         peek_no_eof!(self, "<identifier> or )" => {
             is_tok!(Punctuation::ParenRight) => {
@@ -336,7 +336,7 @@ impl Parser<'_> {
         }
     }
 
-    fn print_statement(&mut self, loc: Location) -> StmtResult {
+    fn print_statement(&mut self, loc: Loc) -> StmtResult {
         let expr = self.expression().map_syntax_err("<expression>")?;
         consume_punctuation!(self, Semicolon)?;
         let stmt = Stmt::print(expr);
@@ -344,14 +344,14 @@ impl Parser<'_> {
     }
 
     #[cfg(feature = "debug")]
-    fn debug_statement(&mut self, loc: Location) -> StmtResult {
+    fn debug_statement(&mut self, loc: Loc) -> StmtResult {
         let expr = self.expression().map_syntax_err("<expression>")?;
         consume_punctuation!(self, Semicolon)?;
         let stmt = Stmt::debug(expr);
         Ok(self.ast.add_stmt(stmt, loc))
     }
 
-    fn while_statement(&mut self, loc: Location) -> StmtResult {
+    fn while_statement(&mut self, loc: Loc) -> StmtResult {
         consume_punctuation!(self, ParenLeft)?;
         let condition = self.expression().map_syntax_err("<expression>")?;
         consume_punctuation!(self, ParenRight)?;
@@ -361,7 +361,7 @@ impl Parser<'_> {
         Ok(self.ast.add_stmt(stmt, loc))
     }
 
-    fn for_statement(&mut self, loc: Location) -> StmtResult {
+    fn for_statement(&mut self, loc: Loc) -> StmtResult {
         consume_punctuation!(self, ParenLeft)?;
 
         let init = match self.peek_no_eof("<var_stmt> or <expr_stmt")? {
@@ -416,7 +416,7 @@ impl Parser<'_> {
         }
     }
 
-    fn return_statement(&mut self, loc: Location) -> StmtResult {
+    fn return_statement(&mut self, loc: Loc) -> StmtResult {
         let value = match self.peek_no_eof("<expression> or ;")? {
             is_tok!(Punctuation::Semicolon) => None,
             _ => Some(self.expression().map_syntax_err("<expression>")?),
@@ -427,7 +427,7 @@ impl Parser<'_> {
         Ok(self.ast.add_stmt(return_, loc))
     }
 
-    fn block(&mut self, start: Location) -> StmtResult {
+    fn block(&mut self, start: Loc) -> StmtResult {
         let mut statements = Vec::new();
 
         // this loop can only stop if EndOfFile or BraceRight encountered
@@ -471,7 +471,7 @@ impl Parser<'_> {
         }
     }
 
-    fn if_statement(&mut self, loc: Location) -> StmtResult {
+    fn if_statement(&mut self, loc: Loc) -> StmtResult {
         consume_punctuation!(self, ParenLeft)?;
         let condition = self.expression().map_syntax_err("<expression>")?;
         consume_punctuation!(self, ParenRight)?;
@@ -594,7 +594,7 @@ impl Parser<'_> {
         Ok(expr)
     }
 
-    fn finish_call(&mut self, loc: Location, callee: ExprId) -> ExprResult {
+    fn finish_call(&mut self, loc: Loc, callee: ExprId) -> ExprResult {
         // zero argument
         if let is_tok!(Punctuation::ParenRight) = self.peek()? {
             self.advance();
@@ -703,7 +703,7 @@ impl Parser<'_> {
     fn peek(&mut self) -> Result<&LToken, ParseError> {
         match self.tokens.front() {
             // out of bound read is considered as EOF at invalid location [0:0]
-            None => Err(ParseError::EndOfFile(Location::default())),
+            None => Err(ParseError::EndOfFile(Loc::default())),
             Some(LToken::Eof(loc)) => Err(ParseError::EndOfFile(*loc)),
             Some(tok) => Ok(tok),
         }

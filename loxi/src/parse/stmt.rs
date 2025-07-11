@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use crate::interp::interner::{Interner, Key};
 use crate::interp::value::Value;
-use crate::util::Location;
+use crate::util::Loc;
 
 use super::ast::Ast;
 use super::expr::ExprId;
@@ -14,7 +14,7 @@ pub enum Unwind {
 
 pub struct StmtL {
     pub stmt: Stmt,
-    pub loc: Location,
+    pub loc: Loc,
 }
 
 pub enum Stmt {
@@ -65,14 +65,14 @@ pub struct StmtId {
 
 pub struct StmtFunctionL {
     pub func: StmtFunction,
-    pub loc: Location,
+    pub loc: Loc,
 }
 
 pub struct StmtFunction {
     pub name: Key,
-    pub params: Box<[(Key, Location)]>,
-    pub body: StmtId,                   // only Stmt::Block is valid here
-    pub captures: Vec<(Key, Location)>, // captures will be filled after resolve stage
+    pub params: Box<[(Key, Loc)]>,
+    pub body: StmtId,              // only Stmt::Block is valid here
+    pub captures: Vec<(Key, Loc)>, // captures will be filled on resolve stage
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd)]
@@ -270,7 +270,7 @@ impl Display for DisplayedStmt<'_, '_, '_> {
 }
 
 impl StmtFunction {
-    pub fn new(name: Key, params: Box<[(Key, Location)]>, body: StmtId) -> Self {
+    pub fn new(name: Key, params: Box<[(Key, Loc)]>, body: StmtId) -> Self {
         Self {
             name,
             params,
