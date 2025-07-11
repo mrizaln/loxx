@@ -121,13 +121,30 @@ pub fn run(interpreter: &mut Interpreter, program: &str, mode: Mode) -> Result<(
 
     // resolving
     let mut resolver = Resolver::new(interner, ast);
-    let resolve_map = resolver.resolve(&program).map_err(|err| {
+    let (resolve_map, captures_list) = resolver.resolve(&program).map_err(|err| {
         err.iter().for_each(|e| {
             eprint_context(&lines, e.loc());
             eprintln_red!("{}", e);
         });
         LoxError::ResolveError
     })?;
+
+    for (id, captures) in captures_list.list {
+        ast.func_add_captures(&id, captures);
+    }
+
+    // for (id, captures) in captures_list.list.iter() {
+    //     let StmtFunctionL { func, loc } = ast.get_func(id);
+    //     let name = interner.resolve(func.name);
+    //     println!("> capture list for function: {:?} at {}", name, loc);
+    //     eprint_context(&lines, *loc);
+    //     for (i, (name, loc)) in captures.iter().enumerate() {
+    //         let name = interner.resolve(*name);
+    //         println!("\n  - [{}] capture: {:?} at {}", i, name, loc);
+    //         eprint_context(&lines, *loc);
+    //     }
+    //     println!("\n\n");
+    // }
 
     // interpreting
     interpreter.interpret(program, resolve_map).map_err(|err| {

@@ -242,15 +242,15 @@ impl Parser<'_> {
     fn function_declaration(&mut self, loc: Location) -> Result<StmtFunctionId, SyntaxError> {
         let (name, _) = consume_identifier!(self)?;
         consume_punctuation!(self, ParenLeft)?;
-        let mut params = Vec::<Key>::new();
+        let mut params = Vec::<(Key, Location)>::new();
 
         peek_no_eof!(self, "<identifier> or )" => {
             is_tok!(Punctuation::ParenRight) => {
                 self.advance();
             },
             is_tok!(Literal::Identifier(_, _)) => loop {
-                let (name, _) = consume_identifier!(self)?;
-                params.push(name);
+                let (name, loc) = consume_identifier!(self)?;
+                params.push((name, loc));
 
                 // I can't use `peek_no_eof!` here since this block contains `break` and `continue`
                 match self.peek_no_eof(", or )")? {

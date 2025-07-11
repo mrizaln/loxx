@@ -124,7 +124,7 @@ impl UserDefined {
         let _guard = env.bind_scope(Rc::new(Env::with_parent(Rc::clone(&self.capture))));
 
         for (i, arg) in args.into_iter().enumerate() {
-            env.define(func.params[i], arg);
+            env.define(func.params[i].0, arg);
         }
 
         let body = match &interpreter.ast.get_stmt(&func.body).stmt {

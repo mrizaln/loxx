@@ -70,8 +70,9 @@ pub struct StmtFunctionL {
 
 pub struct StmtFunction {
     pub name: Key,
-    pub params: Box<[Key]>,
-    pub body: StmtId, // only Stmt::Block is valid here
+    pub params: Box<[(Key, Location)]>,
+    pub body: StmtId,                   // only Stmt::Block is valid here
+    pub captures: Vec<(Key, Location)>, // captures will be filled after resolve stage
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd)]
@@ -269,8 +270,13 @@ impl Display for DisplayedStmt<'_, '_, '_> {
 }
 
 impl StmtFunction {
-    pub fn new(name: Key, params: Box<[Key]>, body: StmtId) -> Self {
-        Self { name, params, body }
+    pub fn new(name: Key, params: Box<[(Key, Location)]>, body: StmtId) -> Self {
+        Self {
+            name,
+            params,
+            body,
+            captures: Vec::default(),
+        }
     }
 
     pub fn display<'a, 'b, 'c>(
@@ -294,7 +300,7 @@ impl Display for DisplayedStmtFunction<'_, '_, '_> {
 
         write!(f, "(fun {} (", interner.resolve(func.name))?;
         for param in &func.params {
-            write!(f, " {}", interner.resolve(*param))?;
+            write!(f, " {}", interner.resolve(param.0))?;
         }
         write!(f, ")")?;
         let body = match &ast.get_stmt(&func.body).stmt {

@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::fmt::Display;
 use std::mem;
 
@@ -9,35 +8,21 @@ use vec_map::VecMap;
 use crate::interp::interner::{Interner, Key};
 use crate::parse::ast::Ast;
 use crate::parse::expr::{ExprId, ExprL, RefExpr, ValExpr};
-use crate::parse::stmt::{StmtFunctionL, StmtId, StmtL};
+use crate::parse::stmt::{StmtFunctionId, StmtFunctionL, StmtId, StmtL};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Location;
 
-use self::scope::{Scope, ScopeError, VarBind};
+use self::scope::{Bind, Captures, Class, Fun, Kind, Scope, ScopeError};
 
 mod scope;
 
 pub struct Resolver<'a, 'b> {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
-    global_refs: RefCell<FxHashMap<Key, ExprId>>, // track global references (may be undefined)
-    func_context: FunctionContext,
-    class_context: ClassContext,
+    global_refs: FxHashMap<Key, ExprId>, // track global references (may be undefined)
+    captures_list: CapturesList,
     interner: &'a Interner,
     ast: &'b Ast,
-}
-
-enum FunctionContext {
-    Function,
-    Method,
-    Constructor,
-    None,
-}
-
-enum ClassContext {
-    Class,
-    SubClass, // A class that inherits from another class
-    None,
 }
 
 #[derive(Debug, Error)]
@@ -75,14 +60,37 @@ pub struct ResolveMap {
     resolved_expr: VecMap<usize>,
 }
 
+#[derive(Default)]
+pub struct CapturesList {
+    pub list: Vec<(StmtFunctionId, Vec<(Key, Location)>)>,
+}
+
 impl Resolver<'_, '_> {
-    pub fn new<'a, 'b>(interner: &'a Interner, ast: &'b Ast) -> Resolver<'a, 'b> {
+    pub fn new<'a, 'b>(interner: &'a mut Interner, ast: &'b Ast) -> Resolver<'a, 'b> {
+        let scope = Scope::new_empty();
+        let mut define = |name: &str| {
+            let name = interner.get_or_intern(name);
+            scope
+                .define_global(name, Bind::Def(Location::default()))
+                .ok()
+                .unwrap();
+        };
+
+        define("clock");
+
+        #[cfg(feature = "loxlox")]
+        {
+            define("getc");
+            define("chr");
+            define("exit");
+            define("print_error");
+        }
+
         Resolver {
-            scope: Scope::new_empty(),
+            scope,
             resolved_expr: FxHashMap::default(),
-            global_refs: RefCell::default(),
-            func_context: FunctionContext::None,
-            class_context: ClassContext::None,
+            global_refs: FxHashMap::default(),
+            captures_list: CapturesList::default(),
             interner,
             ast,
         }
@@ -90,7 +98,10 @@ impl Resolver<'_, '_> {
 
     /// Can resolve multiple times and every time it resolves it will update its internal state and
     /// return a new but updated `ResolveMap`. Useful for REPLs.
-    pub fn resolve(&mut self, program: &Program) -> Result<ResolveMap, Vec<ResolveError>> {
+    pub fn resolve(
+        &mut self,
+        program: &Program,
+    ) -> Result<(ResolveMap, CapturesList), Vec<ResolveError>> {
         for stmt in program.statements.iter() {
             if let Err(e) = self.resolve_stmt(stmt) {
                 return Err(vec![e]);
@@ -98,7 +109,7 @@ impl Resolver<'_, '_> {
         }
 
         // check whether global references reference to valid defined variables
-        let mut global_refs = self.global_refs.take();
+        let mut global_refs = mem::take(&mut self.global_refs);
         for global in self.scope.globals() {
             global_refs.remove_entry(&global);
         }
@@ -115,14 +126,16 @@ impl Resolver<'_, '_> {
                 .collect());
         }
 
-        Ok(ResolveMap {
+        let resolve_map = ResolveMap {
             resolved_expr: self
                 .resolved_expr
                 .clone()
                 .into_iter()
                 .map(|(k, v)| (k.inner(), v))
                 .collect(),
-        })
+        };
+
+        Ok((resolve_map, mem::take(&mut self.captures_list)))
     }
 
     fn resolve_stmt(&mut self, stmt: &StmtId) -> Result<(), ResolveError> {
@@ -139,7 +152,7 @@ impl Resolver<'_, '_> {
                 Ok(())
             }
             Stmt::Block { statements } => {
-                self.scope.create_scope();
+                self.scope.create_scope(Kind::Block);
                 for stmt in statements.iter() {
                     self.resolve_stmt(stmt)?
                 }
@@ -162,36 +175,32 @@ impl Resolver<'_, '_> {
                 self.resolve_expr(condition)?;
                 self.resolve_stmt(body)
             }
-            Stmt::Function { func } => {
-                let func = &self.ast.get_func(func).func;
+            Stmt::Function { func: func_id } => {
+                let func = &self.ast.get_func(func_id).func;
                 self.declare_and_define_var(func.name, *loc)?;
                 let body = match &self.ast.get_stmt(&func.body).stmt {
                     Stmt::Block { statements } => statements,
                     _ => unreachable!("Shold be block"),
                 };
-                self.resolve_function(&func.params, body, *loc, FunctionContext::Function)
+                let captures = self.resolve_function(&func.params, body, Fun::Reg)?;
+                let mut captures = captures.inner.into_iter().collect::<Vec<_>>();
+                captures.sort_by(|l, r| l.1.partial_cmp(&r.1).unwrap());
+                self.captures_list.list.push((*func_id, captures));
+                Ok(())
             }
-            Stmt::Return { value } => {
-                match self.func_context {
-                    FunctionContext::None => Err(ResolveError::StrayReturn(*loc))?,
-                    FunctionContext::Constructor => {
-                        if value.is_some() {
-                            Err(ResolveError::FobiddenReturn(*loc))?
-                        }
-                    }
-                    _ => (),
-                };
-                match value {
+            Stmt::Return { value } => match self.scope.in_fun_scope() {
+                None => Err(ResolveError::StrayReturn(*loc)),
+                Some(Fun::Ctor) if value.is_some() => Err(ResolveError::FobiddenReturn(*loc)),
+                Some(_) => match value {
                     Some(value) => self.resolve_expr(value),
                     None => Ok(()),
-                }
-            }
+                },
+            },
             Stmt::Class {
                 name,
                 base,
                 methods,
             } => {
-                let mut prev_context = mem::replace(&mut self.class_context, ClassContext::Class);
                 self.declare_and_define_var(*name, *loc)?;
 
                 if let Some(expr_id) = base {
@@ -201,41 +210,46 @@ impl Resolver<'_, '_> {
                             if var.name == *name {
                                 Err(ResolveError::ClassInheritItself(*loc))?;
                             }
-
-                            self.class_context = ClassContext::SubClass;
                             self.resolve_expr(expr_id)?;
 
-                            self.scope.create_scope();
-                            let superr = self.interner.key_super;
-                            self.declare_and_define_var(superr, *loc)?;
+                            let kind = match self.scope.in_class_scope() {
+                                Some(_) => Class::Sub,
+                                None => Class::Reg,
+                            };
+
+                            self.scope.create_scope(Kind::Class(kind));
+                            self.declare_and_define_var(self.interner.key_super, *loc)?;
                         }
                         _ => unreachable!("base should be a RefExpr::Variable"),
                     }
+                    self.scope.create_scope(Kind::Class(Class::Sub));
+                } else {
+                    self.scope.create_scope(Kind::Class(Class::Reg));
                 }
 
-                self.scope.create_scope();
-                let this = self.interner.key_this;
-                self.declare_and_define_var(this, *loc)?;
+                self.declare_and_define_var(self.interner.key_this, *loc)?;
 
                 for method in methods.iter() {
-                    let StmtFunctionL { func, loc } = self.ast.get_func(method);
-                    let context = match func.name == self.interner.key_init {
-                        true => FunctionContext::Constructor,
-                        false => FunctionContext::Method,
+                    let StmtFunctionL { func, loc: _ } = self.ast.get_func(method);
+                    let kind = match func.name == self.interner.key_init {
+                        true => Fun::Ctor,
+                        false => Fun::Method,
                     };
                     let body = match &self.ast.get_stmt(&func.body).stmt {
                         Stmt::Block { statements } => statements,
                         _ => unreachable!("Shold be block"),
                     };
-                    self.resolve_function(&func.params, body, *loc, context)?;
+                    let captures = self.resolve_function(&func.params, body, kind)?;
+                    let mut captures = captures.inner.into_iter().collect::<Vec<_>>();
+                    captures.sort_by(|l, r| l.1.partial_cmp(&r.1).unwrap());
+                    self.captures_list.list.push((*method, captures));
                 }
-                self.scope.drop_scope();
 
+                self.scope.drop_scope();
                 if base.is_some() {
                     self.scope.drop_scope();
                 }
 
-                mem::swap(&mut self.class_context, &mut prev_context);
                 Ok(())
             }
 
@@ -285,7 +299,7 @@ impl Resolver<'_, '_> {
             RefExpr::Variable { var } => {
                 let name = var.name;
                 if !self.scope.is_empty() {
-                    if let Some(VarBind::Decl(loc)) = self.scope.get_current(name).as_deref() {
+                    if let Some(Bind::Decl(loc)) = self.scope.get_current(name).as_deref() {
                         return Err(ResolveError::VariableInInitializer(*loc));
                     }
                 }
@@ -299,7 +313,7 @@ impl Resolver<'_, '_> {
                 Ok(())
             }
             RefExpr::Get { object, prop: _ } => {
-                // prop are looked up dynamically
+                // prop is looked up dynamically
                 self.resolve_expr(object)
             }
             RefExpr::Set {
@@ -307,23 +321,23 @@ impl Resolver<'_, '_> {
                 prop: _,
                 value,
             } => {
+                // prop is looked up dynamically
                 self.resolve_expr(value)?;
                 self.resolve_expr(object)
             }
-            RefExpr::This => match self.class_context {
-                ClassContext::None => Err(ResolveError::StrayThis(loc)),
-                _ => {
-                    self.resolve_local(*id, self.interner.get("this"));
+            RefExpr::This => match self.scope.in_class_scope() {
+                None => Err(ResolveError::StrayThis(loc)),
+                Some(_) => {
+                    self.resolve_local(*id, self.interner.key_this);
                     Ok(())
                 }
             },
-            RefExpr::Super { prop: _ } => match self.class_context {
-                ClassContext::None => Err(ResolveError::StraySuper(loc)),
-                ClassContext::Class => Err(ResolveError::NonInheritingSuper(loc)),
-                _ => {
+            RefExpr::Super { prop: _ } => match self.scope.in_class_scope() {
+                None => Err(ResolveError::StraySuper(loc)),
+                Some(Class::Reg) => Err(ResolveError::NonInheritingSuper(loc)),
+                Some(Class::Sub) => {
                     // prop are looked up dynamically
-                    let superr = self.interner.key_super;
-                    self.resolve_local(*id, superr);
+                    self.resolve_local(*id, self.interner.key_super);
                     Ok(())
                 }
             },
@@ -335,68 +349,62 @@ impl Resolver<'_, '_> {
             return;
         }
 
-        let result = self.scope.get(name);
+        let result = self.scope.resolve(name);
         match result {
-            Some((_, distance)) => {
+            Some(distance) => {
                 self.resolved_expr.insert(expr_id, distance);
             }
             None => {
-                // if we can't find the variable we assume it's global
-                self.global_refs.borrow_mut().insert(name, expr_id);
+                self.global_refs.insert(name, expr_id); // assume it's global
             }
         }
     }
 
     fn resolve_function(
         &mut self,
-        params: &[Key],
+        params: &[(Key, Location)],
         body: &[StmtId],
-        loc: Location,
-        context: FunctionContext,
-    ) -> Result<(), ResolveError> {
-        let mut prev_context = mem::replace(&mut self.func_context, context);
-        self.scope.create_scope();
+        kind: Fun,
+    ) -> Result<Captures, ResolveError> {
+        self.scope.create_scope(Kind::Fun(kind));
 
-        for param in params.iter() {
-            self.declare_and_define_var(*param, loc)?;
+        for (param, loc) in params.iter() {
+            self.declare_and_define_var(*param, *loc)?;
         }
         for stmt in body.iter() {
             self.resolve_stmt(stmt)?;
         }
 
-        self.scope.drop_scope();
-        mem::swap(&mut self.func_context, &mut prev_context);
-
-        Ok(())
+        Ok(self.scope.drop_scope())
     }
 
-    fn declare_and_define_var(&self, name: Key, loc: Location) -> Result<(), ResolveError> {
+    fn declare_and_define_var(&mut self, name: Key, loc: Location) -> Result<(), ResolveError> {
         self.declare_var(name, loc)?;
         self.define_var(name, loc);
         Ok(())
     }
 
-    fn declare_var(&self, name: Key, loc: Location) -> Result<(), ResolveError> {
+    fn declare_var(&mut self, name: Key, loc: Location) -> Result<(), ResolveError> {
         let define = match self.scope.is_empty() {
             true => Scope::define_global,
             false => Scope::define,
         };
-        define(&self.scope, name, VarBind::Decl(loc)).map_err(|err| match err {
+        define(&self.scope, name, Bind::Decl(loc)).map_err(|err| match err {
             ScopeError::DuplicateDefine(prev) => ResolveError::DuplicateDeclaration(loc, prev),
         })
     }
 
-    fn define_var(&self, name: Key, loc: Location) {
+    fn define_var(&mut self, name: Key, loc: Location) {
         let get = match self.scope.is_empty() {
             true => Scope::get_global,
             false => Scope::get_current,
         };
         match get(&self.scope, name) {
-            Some(mut val) => *val = VarBind::Def(loc),
+            Some(mut val) => *val = Bind::Def(loc),
             None => panic!("variable not declared first, programmer error"),
         }
         if self.scope.is_empty() {
-            self.global_refs.borrow_mut().remove_entry(&name);
+            self.global_refs.remove_entry(&name);
         }
     }
 }

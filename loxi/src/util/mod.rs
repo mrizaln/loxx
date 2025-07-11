@@ -11,7 +11,7 @@ pub struct TokLoc<T: LoxToken> {
 }
 
 // TODO: add other information like filename
-#[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct Location {
     pub line: usize,
     pub column: usize,
