@@ -11,6 +11,10 @@ MIN_PYTHON = (3, 11)
 if sys.version_info < MIN_PYTHON:
     sys.exit("Python %s.%s or later is required.\n" % MIN_PYTHON)
 
+import fnmatch
+import math
+import re
+import textwrap
 from argparse import (
     ArgumentDefaultsHelpFormatter,
     ArgumentParser,
@@ -22,13 +26,10 @@ from contextlib import chdir
 from dataclasses import dataclass
 from enum import Enum
 from os import system
-from os.path import realpath, dirname
+from os.path import dirname, realpath
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired, run
 from typing import Dict, Generator, List, Self, Tuple
-import fnmatch
-import re
-import textwrap
 
 DIR = Path(dirname(realpath(__file__)))
 
@@ -91,6 +92,8 @@ class Result:
     passed: int = 0
     skipped: int = 0
     failed: int = 0
+    passed_uniq: int = 0
+    failed_uniq: int = 0
 
     def __add__(self, other):
         return Result(
@@ -100,10 +103,12 @@ class Result:
         )
 
     def __str__(self):
+        width1 = int(math.log10(max(self.passed, self.failed, self.skipped, 1))) + 1
+        width2 = int(math.log10(max(self.passed_uniq, self.failed_uniq, 1))) + 1
         return (
-            f"- {Cs.g('Passed ')}: {self.passed}"
-            f"\n- {Cs.y('Skipped')}: {self.skipped}"
-            f"\n- {Cs.r('Failed ')}: {self.failed}"
+            f"- {Cs.g('PASSED ')}: {self.passed:>{width1}} (uniq {self.passed_uniq:>{width2}})"
+            f"\n- {Cs.r('FAILED ')}: {self.failed:>{width1}} (uniq {self.failed_uniq:>{width2}})"
+            f"\n- {Cs.y('SKIPPED')}: {self.skipped:>{width1}}"
         )
 
 
@@ -203,6 +208,12 @@ class Cs:
         return f"\x1b[1;33m{s}\x1b[0m"
 
 
+if not sys.stdout.isatty():
+    Cs.r = lambda s: s
+    Cs.g = lambda s: s
+    Cs.y = lambda s: s
+
+
 # cursor movement
 # ---------------------
 class Cm:
@@ -213,6 +224,11 @@ class Cm:
     @staticmethod
     def u() -> str:
         return "\x1b[u"
+
+
+if not sys.stdout.isatty():
+    Cm.s = lambda: ""
+    Cm.u = lambda: "\n\t  "
 
 
 # print wrapper function that always flushes the output
@@ -268,7 +284,7 @@ class Test:
             printfl(f"\n- Testing Chapter {suite.chapter.name}")
             match suite.chapter:
                 case Chapter.SCANNING | Chapter.PARSING | Chapter.EVALUATING:
-                    printfl("\t- SKIPPED (can only be ran individually)")
+                    printfl(f"\t> {Cs.y('SKIPPED')} (can only be ran individually)")
                     result.skipped += 1
                     continue
 
@@ -279,7 +295,7 @@ class Test:
 
                 if (done := done_tests.get(test)) is not None:
                     passed = Cs.g("PASSED") if done else Cs.r("FAILED")
-                    printfl(f"\t> {passed} {Cs.y('(cached)')}: {test}")
+                    printfl(f"\t> {passed} {Cs.y('(cached)')}: '{test}'")
                     if done:
                         result.passed += 1
                     else:
@@ -295,6 +311,9 @@ class Test:
                         done_tests[test] = False
                     case None:
                         result.skipped += 1
+
+        result.passed_uniq = sum((b for _, b in done_tests.items()))
+        result.failed_uniq = sum((not b for _, b in done_tests.items()))
 
         return result
 
@@ -322,6 +341,9 @@ class Test:
                 case None:
                     result.skipped += 1
 
+        result.passed_uniq = result.passed
+        result.failed_uniq = result.failed
+
         return result
 
     def _run_test(self, test: Path) -> bool | None:
@@ -339,7 +361,7 @@ class Test:
                 case _:
                     raise TypeError("Not a Binary or Command, did you added new types?")
 
-        printfl(f"\t> {Cm.s()}running '{test}'", end="")
+        printfl(f"\t> {Cm.s()}run...         : '{test}'", end="")
         exec = args(self.interpreter.value)
 
         try:
@@ -366,12 +388,12 @@ class Test:
             return False
 
         if self._validate(test, expect, stdout, stderr, returncode):
-            printfl(f"{Cm.u()}{Cs.g('PASSED')}         : ")
+            printfl(f"{Cm.u()}{Cs.g('PASSED')}")
             if self.print_output:
                 pprint(stdout, stderr)
             return True
         else:
-            printfl(f"{Cm.u()}{Cs.r('FAILED')}         : ")
+            printfl(f"{Cm.u()}{Cs.r('FAILED')}")
             [printfl(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
             pprint(stdout, stderr)
             return False
