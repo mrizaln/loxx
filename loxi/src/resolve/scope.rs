@@ -10,11 +10,17 @@ struct Info {
     kind: Kind,
     variables: FxHashMap<Key, Bind>,
     captures: Captures,
+    hoists: Hoists,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Captures {
-    pub inner: FxHashSet<(Key, Loc)>,
+    inner: FxHashSet<(Key, Loc)>,
+}
+
+#[derive(Debug, Default)]
+pub struct Hoists {
+    inner: FxHashSet<(Key, Loc)>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +59,26 @@ pub enum ScopeError {
     DuplicateDefine(Loc),
 }
 
+impl Captures {
+    pub fn contains(&self, key: Key, loc: Loc) {
+        self.inner.contains(&(key, loc));
+    }
+
+    pub fn iter(&self) -> std::collections::hash_set::Iter<(Key, Loc)> {
+        self.inner.iter()
+    }
+}
+
+impl Hoists {
+    pub fn contains(&self, key: Key, loc: Loc) {
+        self.inner.contains(&(key, loc));
+    }
+
+    pub fn iter(&self) -> std::collections::hash_set::Iter<(Key, Loc)> {
+        self.inner.iter()
+    }
+}
+
 impl Bind {
     pub fn loc(&self) -> Loc {
         match self {
@@ -63,7 +89,7 @@ impl Bind {
 }
 
 impl Scope {
-    pub fn new_empty() -> Self {
+    pub fn new() -> Self {
         Self {
             stacks: RefCell::new(vec![]),
             globals: RefCell::default(),
@@ -82,17 +108,17 @@ impl Scope {
         self.stacks.borrow_mut().push(Info {
             kind,
             variables: FxHashMap::default(),
-            captures: Captures {
-                inner: FxHashSet::default(),
-            },
+            captures: Captures::default(),
+            hoists: Hoists::default(),
         });
     }
 
-    pub fn drop_scope(&self) -> Captures {
+    #[must_use]
+    pub fn drop_scope(&self) -> (Captures, Hoists) {
         self.stacks
             .borrow_mut()
             .pop()
-            .map(|v| v.captures)
+            .map(|v| (v.captures, v.hoists))
             .expect("drop should not be excessively called")
     }
 
@@ -132,13 +158,18 @@ impl Scope {
     }
 
     pub fn resolve(&self, key: Key) -> Option<usize> {
-        self.get(key).map(|(b, d)| {
-            let loc = b.loc();
-            drop(b);
+        self.get(key).map(|(bind, dist)| {
+            let loc = bind.loc();
+            drop(bind);
 
             let index = self.index();
 
-            let start = index - d + 1;
+            let mut stack = self.stacks.borrow_mut();
+            let info = stack.get_mut(index - dist).unwrap();
+            info.hoists.inner.insert((key, loc));
+            drop(stack);
+
+            let start = index - dist + 1;
             for i in start..=index {
                 let mut stack = self.stacks.borrow_mut();
                 let info = stack.get_mut(i).unwrap();
@@ -146,7 +177,7 @@ impl Scope {
                     info.captures.inner.insert((key, loc));
                 }
             }
-            d
+            dist
         })
     }
 

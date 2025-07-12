@@ -12,7 +12,7 @@ use crate::parse::stmt::{StmtFunctionId, StmtFunctionL, StmtId, StmtL};
 use crate::parse::{expr::Expr, stmt::Stmt, Program};
 use crate::util::Loc;
 
-use self::scope::{Bind, Captures, Class, Fun, Kind, Scope, ScopeError};
+use self::scope::{Bind, Captures, Class, Fun, Hoists, Kind, Scope, ScopeError};
 
 mod scope;
 
@@ -20,7 +20,8 @@ pub struct Resolver<'a, 'b> {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
     global_refs: FxHashMap<Key, ExprId>, // track global references (may be undefined)
-    captures_list: CapturesList,
+    captures_map: FxHashMap<StmtFunctionId, Captures>,
+    hoists_map: FxHashMap<StmtId, Hoists>,
     interner: &'a Interner,
     ast: &'b Ast,
 }
@@ -58,16 +59,13 @@ pub enum ResolveError {
 #[derive(Default)]
 pub struct ResolveMap {
     resolved_expr: VecMap<usize>,
-}
-
-#[derive(Default)]
-pub struct CapturesList {
-    pub list: Vec<(StmtFunctionId, Vec<(Key, Loc)>)>,
+    captures_map: FxHashMap<StmtFunctionId, Captures>,
+    hoists_map: FxHashMap<StmtId, Hoists>,
 }
 
 impl Resolver<'_, '_> {
     pub fn new<'a, 'b>(interner: &'a mut Interner, ast: &'b Ast) -> Resolver<'a, 'b> {
-        let scope = Scope::new_empty();
+        let scope = Scope::new();
         let mut define = |name: &str| {
             let name = interner.get_or_intern(name);
             scope
@@ -90,7 +88,8 @@ impl Resolver<'_, '_> {
             scope,
             resolved_expr: FxHashMap::default(),
             global_refs: FxHashMap::default(),
-            captures_list: CapturesList::default(),
+            captures_map: FxHashMap::default(),
+            hoists_map: FxHashMap::default(),
             interner,
             ast,
         }
@@ -98,10 +97,7 @@ impl Resolver<'_, '_> {
 
     /// Can resolve multiple times and every time it resolves it will update its internal state and
     /// return a new but updated `ResolveMap`. Useful for REPLs.
-    pub fn resolve(
-        &mut self,
-        program: &Program,
-    ) -> Result<(ResolveMap, CapturesList), Vec<ResolveError>> {
+    pub fn resolve(&mut self, program: &Program) -> Result<ResolveMap, Vec<ResolveError>> {
         for stmt in program.statements.iter() {
             if let Err(e) = self.resolve_stmt(stmt) {
                 return Err(vec![e]);
@@ -126,20 +122,22 @@ impl Resolver<'_, '_> {
                 .collect());
         }
 
-        let resolve_map = ResolveMap {
-            resolved_expr: self
-                .resolved_expr
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (k.inner(), v))
-                .collect(),
-        };
+        let resolved_expr = self
+            .resolved_expr
+            .clone()
+            .into_iter()
+            .map(|(k, v)| (k.inner(), v))
+            .collect();
 
-        Ok((resolve_map, mem::take(&mut self.captures_list)))
+        Ok(ResolveMap {
+            resolved_expr,
+            captures_map: mem::take(&mut self.captures_map),
+            hoists_map: mem::take(&mut self.hoists_map),
+        })
     }
 
-    fn resolve_stmt(&mut self, stmt: &StmtId) -> Result<(), ResolveError> {
-        let StmtL { stmt, loc } = self.ast.get_stmt(stmt);
+    fn resolve_stmt(&mut self, id: &StmtId) -> Result<(), ResolveError> {
+        let StmtL { stmt, loc } = self.ast.get_stmt(id);
         match stmt {
             Stmt::Expr { expr } => self.resolve_expr(expr),
             Stmt::Print { expr } => self.resolve_expr(expr),
@@ -156,7 +154,8 @@ impl Resolver<'_, '_> {
                 for stmt in statements.iter() {
                     self.resolve_stmt(stmt)?
                 }
-                self.scope.drop_scope();
+                let (_, hoists) = self.scope.drop_scope();
+                self.hoists_map.insert(*id, hoists);
                 Ok(())
             }
             Stmt::If {
@@ -182,10 +181,9 @@ impl Resolver<'_, '_> {
                     Stmt::Block { statements } => statements,
                     _ => unreachable!("Shold be block"),
                 };
-                let captures = self.resolve_function(&func.params, body, Fun::Reg)?;
-                let mut captures = captures.inner.into_iter().collect::<Vec<_>>();
-                captures.sort_by(|l, r| l.1.partial_cmp(&r.1).unwrap());
-                self.captures_list.list.push((*func_id, captures));
+                let (captures, hoists) = self.resolve_function(&func.params, body, Fun::Reg)?;
+                self.captures_map.insert(*func_id, captures);
+                self.hoists_map.insert(func.body, hoists);
                 Ok(())
             }
             Stmt::Return { value } => match self.scope.in_fun_scope() {
@@ -239,15 +237,14 @@ impl Resolver<'_, '_> {
                         Stmt::Block { statements } => statements,
                         _ => unreachable!("Shold be block"),
                     };
-                    let captures = self.resolve_function(&func.params, body, kind)?;
-                    let mut captures = captures.inner.into_iter().collect::<Vec<_>>();
-                    captures.sort_by(|l, r| l.1.partial_cmp(&r.1).unwrap());
-                    self.captures_list.list.push((*method, captures));
+                    let (captures, hoists) = self.resolve_function(&func.params, body, kind)?;
+                    self.captures_map.insert(*method, captures);
+                    self.hoists_map.insert(func.body, hoists);
                 }
 
-                self.scope.drop_scope();
+                let _ = self.scope.drop_scope();
                 if base.is_some() {
-                    self.scope.drop_scope();
+                    let _ = self.scope.drop_scope();
                 }
 
                 Ok(())
@@ -365,7 +362,7 @@ impl Resolver<'_, '_> {
         params: &[(Key, Loc)],
         body: &[StmtId],
         kind: Fun,
-    ) -> Result<Captures, ResolveError> {
+    ) -> Result<(Captures, Hoists), ResolveError> {
         self.scope.create_scope(Kind::Fun(kind));
 
         for (param, loc) in params.iter() {
@@ -428,6 +425,14 @@ impl ResolveError {
 impl ResolveMap {
     pub fn distance(&self, expr_id: ExprId) -> Option<usize> {
         self.resolved_expr.get(expr_id.inner()).copied()
+    }
+
+    pub fn get_captures(&self, func_id: StmtFunctionId) -> Option<&Captures> {
+        self.captures_map.get(&func_id)
+    }
+
+    pub fn get_hoists(&self, stmt_id: StmtId) -> Option<&Hoists> {
+        self.hoists_map.get(&stmt_id)
     }
 }
 

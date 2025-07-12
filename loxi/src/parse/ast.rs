@@ -1,4 +1,3 @@
-use crate::interner::Key;
 use crate::util::Loc;
 
 use super::expr::{Expr, ExprId, ExprL};
@@ -35,10 +34,6 @@ impl Ast {
         let id = self.functions.len();
         self.functions.push(StmtFunctionL { func, loc });
         StmtFunctionId::new(id)
-    }
-
-    pub fn func_add_captures(&mut self, id: &StmtFunctionId, captures: Vec<(Key, Loc)>) {
-        self.functions[id.inner()].func.captures = captures;
     }
 
     pub fn get_expr(&self, id: &ExprId) -> &ExprL {

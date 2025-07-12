@@ -71,8 +71,7 @@ pub struct StmtFunctionL {
 pub struct StmtFunction {
     pub name: Key,
     pub params: Box<[(Key, Loc)]>,
-    pub body: StmtId,              // only Stmt::Block is valid here
-    pub captures: Vec<(Key, Loc)>, // captures will be filled on resolve stage
+    pub body: StmtId, // only Stmt::Block is valid here
 }
 
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Ord, PartialOrd)]
@@ -271,12 +270,7 @@ impl Display for DisplayedStmt<'_, '_, '_> {
 
 impl StmtFunction {
     pub fn new(name: Key, params: Box<[(Key, Loc)]>, body: StmtId) -> Self {
-        Self {
-            name,
-            params,
-            body,
-            captures: Vec::default(),
-        }
+        Self { name, params, body }
     }
 
     pub fn display<'a, 'b, 'c>(
