@@ -57,7 +57,7 @@ impl Class {
         self: &Rc<Self>,
         loc: Loc,
         interpreter: &Interpreter,
-        args: ValueGen<'_, '_, F>,
+        args: ValueGen<'_, F>,
     ) -> Result<Rc<Instance>, RuntimeError>
     where
         F: Fn(ExprId) -> Result<Value, RuntimeError>,

@@ -341,9 +341,7 @@ impl Interpreter {
             }
             ValExpr::Call { callee, args } => {
                 let callee = self.eval(callee)?;
-
-                let mut gen = |expr_id| self.eval(&expr_id);
-                let args = ValueGen::new(args, &mut gen);
+                let args = ValueGen::new(args, |expr_id| self.eval(&expr_id));
 
                 match callee {
                     Value::Function(func) => match func.as_ref() {

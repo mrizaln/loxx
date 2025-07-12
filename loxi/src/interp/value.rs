@@ -43,12 +43,12 @@ pub enum InvalidOp {
 }
 
 /// Helper struct that lazily generate values from a slice of `ExprId`.
-pub struct ValueGen<'a, 'b, F>
+pub struct ValueGen<'a, F>
 where
     F: Fn(ExprId) -> Result<Value, RuntimeError>,
 {
     exprs: &'a [ExprId],
-    gen: &'b mut F,
+    gen: F,
     index: usize,
 }
 
@@ -293,11 +293,11 @@ impl Display for DisplayedValue<'_, '_, '_> {
     }
 }
 
-impl<'a, 'b, F> ValueGen<'a, 'b, F>
+impl<'a, F> ValueGen<'a, F>
 where
     F: Fn(ExprId) -> Result<Value, RuntimeError>,
 {
-    pub fn new(exprs: &'a [ExprId], gen: &'b mut F) -> Self {
+    pub fn new(exprs: &'a [ExprId], gen: F) -> Self {
         Self {
             exprs,
             gen,
@@ -310,7 +310,7 @@ where
     }
 }
 
-impl<F> Iterator for ValueGen<'_, '_, F>
+impl<F> Iterator for ValueGen<'_, F>
 where
     F: Fn(ExprId) -> Result<Value, RuntimeError>,
 {

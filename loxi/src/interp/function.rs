@@ -66,7 +66,7 @@ impl Native {
     pub fn call<F>(
         &self,
         interpreter: &Interpreter,
-        args: ValueGen<'_, '_, F>,
+        args: ValueGen<'_, F>,
         loc: Loc,
     ) -> Result<Value, RuntimeError>
     where
@@ -98,7 +98,7 @@ impl UserDefined {
     pub fn call<F>(
         &self,
         interpreter: &Interpreter,
-        args: ValueGen<'_, '_, F>,
+        args: ValueGen<'_, F>,
         loc: Loc,
     ) -> Result<Value, RuntimeError>
     where
