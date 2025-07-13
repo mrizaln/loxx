@@ -3,12 +3,19 @@ name = "loxii"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["unicode", "loxlox", "debug"]
+unicode = []
+loxlox = []
+debug = []
+
 [dependencies]
 loxi = { path = "../loxi" }
 
 clap = { workspace = true }
 coredump = { workspace = true }
 thiserror = { workspace = true }
+rustc-hash = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
