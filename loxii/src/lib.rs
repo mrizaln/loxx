@@ -2,9 +2,17 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
-mod util;
+use loxi::resolve::Resolver;
 
-pub fn run(program: &str, mode: loxi::RunMode) -> Result<(), loxi::LoxError> {
+use self::compiler::Compiler;
+
+mod bytecode;
+mod compiler;
+mod memory;
+mod util;
+mod value;
+
+pub fn run(program: &str, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
     let mut interner = loxi::interner::Interner::new();
     let mut ast = loxi::parse::ast::Ast::new();
 
@@ -23,13 +31,13 @@ pub fn run(program: &str, mode: loxi::RunMode) -> Result<(), loxi::LoxError> {
                 loxi::lex::LexError::UnterminatedString(loc) => loc,
                 loxi::lex::LexError::UnableToParseNumber(loc, _) => loc,
             };
-            loxi::print_context(&lines, *loc);
+            loxi::eprint_context(&lines, *loc);
             loxi::println_red!("{}", err);
         });
         return Err(loxi::LoxError::LexError(errors.len()));
     }
 
-    if mode == loxi::RunMode::DumpLex {
+    if mode == loxi::Mode::DumpLex {
         for tok in tokens.iter() {
             println!("{}", tok.display(&interner));
         }
@@ -42,31 +50,51 @@ pub fn run(program: &str, mode: loxi::RunMode) -> Result<(), loxi::LoxError> {
     }
 
     // parsing
-    let mut parser = loxi::parse::Parser::new(&mut ast);
+    let mut parser = loxi::parse::Parser::new(&mut ast, loxi::parse::Mode::Script);
     let program = parser.parse(tokens).map_err(|err| {
         err.iter().for_each(|e| {
-            loxi::print_context(&lines, e.loc());
+            loxi::eprint_context(&lines, e.loc());
             loxi::println_red!("{}", e);
         });
         loxi::LoxError::ParseError
     })?;
 
-    if mode == loxi::RunMode::DumpParse {
+    if mode == loxi::Mode::DumpParse {
         println!("{}", program.display(&interner, &ast));
         return Ok(());
     }
 
+    // resolving
+    let mut resolver = Resolver::new(&mut interner, &ast);
+    let resolve_map = resolver.resolve(&program).map_err(|err| {
+        err.iter().for_each(|e| {
+            loxi::eprint_context(&lines, e.loc());
+            loxi::eprintln_red!("{}", e);
+        });
+        loxi::LoxError::ResolveError
+    })?;
+
     // compile
+    let mut compiler = Compiler::new(resolve_map, &ast, &interner);
+    let Ok(bytecode) = compiler.compile(&program) else {
+        loxi::eprintln_red!("{}", "failed to compile");
+        return Ok(());
+    };
+
+    // dump
+    let display = bytecode.display();
+    println!("bytecode:\n{}", display);
 
     // interpret
+    // TODO: implement
 
-    todo!("The rest of the interpreter is not implemented yet");
+    Ok(())
 }
 
-pub fn run_file(path: PathBuf, mode: loxi::RunMode) -> Result<(), loxi::LoxError> {
+pub fn run_file(path: PathBuf, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
     let contents = {
         let mut string = String::new();
-        let mut file = File::open(path.clone())?;
+        let mut file = File::open(path)?;
         file.read_to_string(&mut string)?;
 
         match string.is_empty() {

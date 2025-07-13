@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use loxi::{run_file, run_prompt, LoxError, RunMode};
+use loxi::Mode;
+use loxii::run_file;
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -37,29 +38,21 @@ fn main() -> ExitCode {
             }
 
             let mode = match (args.dump_lex, args.dump_parse) {
-                (true, false) => RunMode::DumpLex,
-                (false, true) => RunMode::DumpParse,
-                _ => RunMode::Normal,
+                (true, false) => Mode::DumpLex,
+                (false, true) => Mode::DumpParse,
+                _ => Mode::Normal,
             };
 
-            if let Err(err) = run_file(path, mode) {
-                eprintln!("{err}");
-                return match err {
-                    LoxError::EmptyError => ExitCode::SUCCESS,
-                    LoxError::IoError(_) => ExitCode::FAILURE,
-                    LoxError::LexError(_) => ExitCode::from(65),
-                    LoxError::ParseError => ExitCode::from(65),
-                    LoxError::ResolveError => ExitCode::from(65),
-                    LoxError::RuntimeError => ExitCode::from(70),
-                };
+            match run_file(path, mode) {
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+                Ok(_) => ExitCode::SUCCESS,
             }
-            ExitCode::SUCCESS
         }
         None => {
-            if let Err(err) = run_prompt() {
-                eprintln!("{}", err);
-                return ExitCode::FAILURE;
-            }
+            unimplemented!("soon REPL will be implemented");
             ExitCode::SUCCESS
         }
     }
