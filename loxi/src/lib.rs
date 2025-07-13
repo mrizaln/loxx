@@ -12,12 +12,12 @@ use self::util::Loc;
 pub mod lex;
 pub mod native_fn;
 pub mod parse;
+pub mod resolve;
 pub mod util;
 
 pub use interp::interner;
 
 mod interp;
-mod resolve;
 
 #[macro_export]
 macro_rules! println_red {
