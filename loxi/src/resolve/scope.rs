@@ -163,19 +163,22 @@ impl Scope {
             drop(bind);
 
             let index = self.index();
-
-            let mut stack = self.stacks.borrow_mut();
-            let info = stack.get_mut(index - dist).unwrap();
-            info.hoists.inner.insert((key, loc));
-            drop(stack);
-
             let start = index - dist + 1;
+            let mut captured = false;
+
             for i in start..=index {
                 let mut stack = self.stacks.borrow_mut();
                 let info = stack.get_mut(i).unwrap();
                 if let Kind::Fun(_) = info.kind {
                     info.captures.inner.insert((key, loc));
+                    captured = true;
                 }
+            }
+
+            if captured {
+                let mut stack = self.stacks.borrow_mut();
+                let stack = &mut stack.get_mut(index - dist).unwrap();
+                stack.hoists.inner.insert((key, loc));
             }
             dist
         })

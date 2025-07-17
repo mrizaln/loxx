@@ -14,12 +14,12 @@ use crate::util::Loc;
 
 use self::scope::{Bind, Captures, Class, Fun, Hoists, Kind, Scope, ScopeError};
 
-mod scope;
+pub mod scope;
 
 pub struct Resolver<'a, 'b> {
     scope: Scope,
     resolved_expr: FxHashMap<ExprId, usize>,
-    global_refs: FxHashMap<Key, ExprId>, // track global references (may be undefined)
+    global_refs: FxHashMap<Key, Vec<ExprId>>, // track global references (may be undefined)
     captures_map: FxHashMap<StmtFunctionId, Captures>,
     hoists_map: FxHashMap<StmtId, Hoists>,
     interner: &'a Interner,
@@ -111,15 +111,17 @@ impl Resolver<'_, '_> {
         }
 
         if !global_refs.is_empty() {
-            return Err(global_refs
-                .into_iter()
-                .map(|(k, v)| {
+            let unresolved = global_refs.iter().flat_map(|(name, exprs)| {
+                exprs.iter().map(|v| {
                     ResolveError::UndefinedVariable(
-                        self.ast.get_expr(&v).loc,
-                        self.interner.resolve(k).to_owned(),
+                        self.ast.get_expr(v).loc,
+                        self.interner.resolve(*name).to_owned(),
                     )
                 })
-                .collect());
+            });
+            let mut unresolved = unresolved.collect::<Vec<_>>();
+            unresolved.sort_by_key(|l| l.loc());
+            return Err(unresolved);
         }
 
         let resolved_expr = self
@@ -342,19 +344,14 @@ impl Resolver<'_, '_> {
     }
 
     fn resolve_local(&mut self, expr_id: ExprId, name: Key) {
-        if self.scope.is_empty() {
-            return;
-        }
-
-        let result = self.scope.resolve(name);
-        match result {
-            Some(distance) => {
+        if !self.scope.is_empty() {
+            if let Some(distance) = self.scope.resolve(name) {
                 self.resolved_expr.insert(expr_id, distance);
-            }
-            None => {
-                self.global_refs.insert(name, expr_id); // assume it's global
+                return;
             }
         }
+        // assume global
+        self.global_refs.entry(name).or_default().push(expr_id)
     }
 
     fn resolve_function(
