@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::mem;
 
 use loxi::interner::{Interner, Key};
@@ -8,33 +10,35 @@ use loxi::parse::token::{self, Literal};
 use loxi::parse::Program;
 use loxi::resolve::ResolveMap;
 use loxi::util::Loc;
-use rustc_hash::FxHashMap;
+use thiserror::Error;
 
-use crate::bytecode::{BinOp, Bytecode, BytecodeReader, Offset, UnaryOp};
-use crate::value::Constant;
+use crate::bytecode::{Address, BinOp, Bytecode, ConstKind, JumpOp, LoadOp, Offset, UnaryOp};
+use crate::metadata::{Metadata, VarId};
 
 pub struct Compiler<'a> {
     bytecode: Bytecode,
-    variables: FxHashMap<(Key, Loc), u16>,
-    local_depth: u16,
     resolve_map: ResolveMap,
+    debug_info: Metadata,
+    variables: Vec<(Key, VarId)>,
+    stack_depth: u32,
     ast: &'a Ast,
     interner: &'a Interner,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 pub enum CompileError {
-    #[error("{0} SyntaxError: Variable is used in its own initializer")]
-    VariableInInitializer(Loc),
+    #[error("{0} CompileError: error")]
+    Error(Loc),
 }
 
 impl<'a> Compiler<'a> {
     pub fn new(resolve_map: ResolveMap, ast: &'a Ast, interner: &'a Interner) -> Self {
         Self {
             bytecode: Bytecode::new(),
-            variables: FxHashMap::default(),
-            local_depth: 0,
             resolve_map,
+            debug_info: Metadata::default(),
+            variables: Vec::default(),
+            stack_depth: 0,
             ast,
             interner,
         }
@@ -51,11 +55,11 @@ impl<'a> Compiler<'a> {
         let StmtL { stmt, loc } = self.ast.get_stmt(id);
         match stmt {
             Stmt::Expr { expr } => self.compile_expr(expr).map(|_| {
-                self.local_depth -= 1;
+                self.decr_depth(1);
                 self.bytecode.emit_pop();
             }),
             Stmt::Print { expr } => self.compile_print(expr),
-            Stmt::Var { name, init } => self.compile_var(name, init),
+            Stmt::Var { name, init } => self.compile_var(name, loc, init),
             Stmt::Block { statements } => self.compile_block(statements),
             Stmt::If {
                 condition,
@@ -76,7 +80,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_expr(&mut self, expr: &ExprId) -> Result<Offset, CompileError> {
+    fn compile_expr(&mut self, expr: &ExprId) -> Result<(), CompileError> {
         let ExprL { expr, loc } = self.ast.get_expr(expr);
         match expr {
             Expr::ValExpr(val_expr) => self.compile_val_expr(val_expr, loc),
@@ -84,62 +88,96 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_val_expr(&mut self, expr: &ValExpr, loc: &Loc) -> Result<Offset, CompileError> {
+    fn compile_val_expr(&mut self, expr: &ValExpr, loc: &Loc) -> Result<(), CompileError> {
         match expr {
             ValExpr::Literal { value } => {
-                let addr = self.bytecode.create_constant(match value {
-                    Literal::Number(num) => Constant::Number(*num),
-                    Literal::String(key) => Constant::String(self.interner.resolve(*key)),
-                    Literal::True => Constant::Bool(true),
-                    Literal::False => Constant::Bool(false),
-                    Literal::Nil => Constant::Nil,
-                });
-                self.bytecode.emit_constant(addr);
-                self.local_depth += 1;
-                Ok(Offset(self.local_depth))
+                match value {
+                    Literal::Number(num) => {
+                        let addr = self.bytecode.create_consant_num(*num);
+                        self.bytecode.emit_constant(ConstKind::Number(addr));
+                    }
+                    Literal::String(key) => {
+                        let addr = self.bytecode.create_constant_string(*key, self.interner);
+                        self.bytecode.emit_constant(ConstKind::String(addr));
+                    }
+                    Literal::True => _ = self.bytecode.emit_constant(ConstKind::Bool(true)),
+                    Literal::False => _ = self.bytecode.emit_constant(ConstKind::Bool(false)),
+                    Literal::Nil => _ = self.bytecode.emit_constant(ConstKind::Nil),
+                };
+                self.incr_depth(1);
             }
             ValExpr::Unary { operator, right } => {
-                let right = self.compile_expr(right)?;
+                self.compile_expr(right)?;
                 let op = match operator {
-                    token::UnaryOp::Minus => UnaryOp::Negate(right),
-                    token::UnaryOp::Not => UnaryOp::Not(right),
+                    token::UnaryOp::Minus => UnaryOp::Negate,
+                    token::UnaryOp::Not => UnaryOp::Not,
                 };
-                self.bytecode.emit_unary(op);
-                Ok(Offset(self.local_depth))
+                let addr = self.bytecode.emit_unary(op);
+                self.debug_info.push_expr(loc, operator.into(), addr);
             }
             ValExpr::Binary {
                 left,
                 operator,
                 right,
             } => {
-                let left = self.compile_expr(left)?;
-                let right = self.compile_expr(right)?;
+                self.compile_expr(left)?;
+                self.compile_expr(right)?;
                 let op = match operator {
-                    token::BinaryOp::Equal => BinOp::Equal(left, right),
-                    token::BinaryOp::NotEqual => BinOp::NotEqual(left, right),
-                    token::BinaryOp::Less => BinOp::Less(left, right),
-                    token::BinaryOp::LessEq => BinOp::LessEq(left, right),
-                    token::BinaryOp::Greater => BinOp::Greater(left, right),
-                    token::BinaryOp::GreaterEq => BinOp::GreaterEq(left, right),
-                    token::BinaryOp::Add => BinOp::Add(left, right),
-                    token::BinaryOp::Sub => BinOp::Sub(left, right),
-                    token::BinaryOp::Mul => BinOp::Mul(left, right),
-                    token::BinaryOp::Div => BinOp::Div(left, right),
+                    token::BinaryOp::Equal => BinOp::Equal,
+                    token::BinaryOp::NotEqual => BinOp::NotEqual,
+                    token::BinaryOp::Less => BinOp::Less,
+                    token::BinaryOp::LessEq => BinOp::LessEq,
+                    token::BinaryOp::Greater => BinOp::Greater,
+                    token::BinaryOp::GreaterEq => BinOp::GreaterEq,
+                    token::BinaryOp::Add => BinOp::Add,
+                    token::BinaryOp::Sub => BinOp::Sub,
+                    token::BinaryOp::Mul => BinOp::Mul,
+                    token::BinaryOp::Div => BinOp::Div,
                 };
-                self.bytecode.emit_binary(op);
-                self.local_depth -= 1;
-                Ok(Offset(self.local_depth))
+                let addr = self.bytecode.emit_binary(op);
+                self.debug_info.push_expr(loc, operator.into(), addr);
+                self.decr_depth(1);
             }
-            ValExpr::Grouping { expr } => self.compile_expr(expr),
-            ValExpr::Logical { left, kind, right } => todo!(),
+            ValExpr::Grouping { expr } => self.compile_expr(expr)?,
+            ValExpr::Logical { left, kind, right } => match kind {
+                token::LogicalOp::And => {
+                    self.compile_expr(left)?;
+                    let op = JumpOp::OnFalse(Address::default());
+                    let (addr, patch) = self.bytecode.emit_jump(op);
+                    self.debug_info.push_expr(loc, kind.into(), addr);
+
+                    self.decr_depth(1);
+                    self.bytecode.emit_pop();
+
+                    self.compile_expr(right)?;
+                    self.bytecode.patch_jump(patch);
+                }
+                token::LogicalOp::Or => {
+                    self.compile_expr(left)?;
+                    let op = JumpOp::OnTrue(Address::default());
+                    let (addr, patch) = self.bytecode.emit_jump(op);
+                    self.debug_info.push_expr(loc, kind.into(), addr);
+
+                    self.decr_depth(1);
+                    self.bytecode.emit_pop();
+
+                    self.compile_expr(right)?;
+                    self.bytecode.patch_jump(patch);
+                }
+            },
             ValExpr::Call { callee, args } => todo!(),
-        }
+        };
+        Ok(())
     }
 
-    fn compile_ref_expr(&mut self, expr: &RefExpr) -> Result<Offset, CompileError> {
+    fn compile_ref_expr(&mut self, expr: &RefExpr) -> Result<(), CompileError> {
         match expr {
-            RefExpr::Variable { var } => todo!(),
-            RefExpr::Grouping { expr } => todo!(),
+            RefExpr::Variable { var } => {
+                let offset = self.get_variable(var.name).unwrap();
+                self.bytecode.emit_load(LoadOp::Local(offset));
+                self.incr_depth(1);
+            }
+            RefExpr::Grouping { expr } => self.compile_expr(expr)?,
             RefExpr::Assignment { var, value } => todo!(),
             RefExpr::Get { object, prop } => todo!(),
             RefExpr::Set {
@@ -149,15 +187,40 @@ impl<'a> Compiler<'a> {
             } => todo!(),
             RefExpr::Super { prop } => todo!(),
             RefExpr::This => todo!(),
-        }
+        };
+        Ok(())
     }
 
     fn compile_print(&mut self, expr: &ExprId) -> Result<(), CompileError> {
-        todo!()
+        self.compile_expr(expr)?;
+        self.bytecode.emit_print();
+        self.decr_depth(1);
+        Ok(())
     }
 
-    fn compile_var(&mut self, name: &Key, init: &Option<ExprId>) -> Result<(), CompileError> {
-        todo!()
+    fn compile_var(
+        &mut self,
+        name: &Key,
+        loc: &Loc,
+        init: &Option<ExprId>,
+    ) -> Result<(), CompileError> {
+        match init {
+            Some(expr) => self.compile_expr(expr)?,
+            None => {
+                self.bytecode.emit_constant(ConstKind::Nil);
+                self.incr_depth(1);
+            }
+        }
+        let offset = self.current_depth();
+        let id = self.debug_info.push_var(
+            loc,
+            self.interner.resolve(*name),
+            offset,
+            self.bytecode.current_address(),
+            0,
+        );
+        self.variables.push((*name, id));
+        Ok(())
     }
 
     fn compile_block(&mut self, statements: &[StmtId]) -> Result<(), CompileError> {
@@ -197,5 +260,24 @@ impl<'a> Compiler<'a> {
     #[cfg(feature = "debug")]
     fn compile_debug(&mut self, expr: &ExprId) -> Result<(), CompileError> {
         todo!()
+    }
+
+    fn get_variable(&self, key: Key) -> Option<Offset> {
+        let var = self.variables.iter().rev().find(|v| v.0 == key);
+        var.map(|v| self.debug_info.get_var(v.1)).map(|v| v.offset)
+    }
+
+    fn current_depth(&self) -> Offset {
+        Offset(self.stack_depth)
+    }
+
+    fn incr_depth(&mut self, amount: u32) -> Offset {
+        self.stack_depth += amount;
+        Offset(self.stack_depth)
+    }
+
+    fn decr_depth(&mut self, amount: u32) -> Offset {
+        self.stack_depth -= amount;
+        Offset(self.stack_depth)
     }
 }
