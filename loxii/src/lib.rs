@@ -5,12 +5,15 @@ use std::path::PathBuf;
 use loxi::resolve::Resolver;
 
 use self::compiler::Compiler;
+use self::vm::Vm;
 
 mod bytecode;
 mod compiler;
 mod memory;
+mod metadata;
 mod util;
 mod value;
+mod vm;
 
 pub fn run(program: &str, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
     let mut interner = loxi::interner::Interner::new();
@@ -87,6 +90,10 @@ pub fn run(program: &str, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
 
     // interpret
     // TODO: implement
+    let mut vm = Vm::new();
+    if let Err(err) = vm.interpret(&bytecode) {
+        loxi::eprintln_red!("{}", err);
+    }
 
     Ok(())
 }
