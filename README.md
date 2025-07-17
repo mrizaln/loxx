@@ -63,6 +63,55 @@ The benchmarks are performed on an **Intel Core i5-10500H machine with the frequ
 
 > **Not implemented yet**
 
+## Implementation Differences
+
+### Access to undefined variable detection is moved to resolve-time
+
+> TODO: maybe make exception for REPL?
+
+This change limits the late-binding ability of global variables. Global variables can still be be referenced in a function definition as long as variables are defined before the function is called.
+
+This is OK:
+
+```lox
+fun hello_world() { print hello + " " + world + "!"; }
+
+var hello = "Hi";
+var world = "Terra";
+
+hello_world();
+```
+
+This will fail:
+
+```lox
+fun hello_world() { print hello + " " + world + "!"; }
+
+var hello = "Hi";
+hello_world();
+var world = "Terra";
+```
+
+This is OK:
+
+```lox
+fun hello_world() { print hello + " " + world + "!"; }
+
+var hello = "Hi";
+var greetings = hello_world;
+var world = "Terra";
+
+greetings();
+```
+
+Variable redeclaration is still possible:
+
+```lox
+var hello = "hello";
+var hello;
+print hello;              // prints <nil>
+```
+
 ## Extension
 
 > enable using cargo `--features` flag
