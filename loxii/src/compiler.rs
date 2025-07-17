@@ -8,18 +8,23 @@ use loxi::parse::expr::{Expr, ExprId, ExprL, RefExpr, ValExpr};
 use loxi::parse::stmt::{Stmt, StmtFunctionId, StmtId, StmtL};
 use loxi::parse::token::{self, Literal};
 use loxi::parse::Program;
+use loxi::resolve::scope::Hoists;
 use loxi::resolve::ResolveMap;
 use loxi::util::Loc;
 use thiserror::Error;
 
-use crate::bytecode::{Address, BinOp, Bytecode, ConstKind, JumpOp, LoadOp, Offset, UnaryOp};
+use crate::bytecode::{
+    Address, BinOp, Bytecode, ConstKind, JumpOp, LoadOp, Offset, StoreOp, UnaryOp,
+};
 use crate::metadata::{Metadata, VarId};
 
 pub struct Compiler<'a> {
     bytecode: Bytecode,
     resolve_map: ResolveMap,
     debug_info: Metadata,
-    variables: Vec<(Key, VarId)>,
+    locals: Vec<(Key, VarId)>,
+    scopes: Vec<u32>,
+    current_hoists: Option<Hoists>,
     stack_depth: u32,
     ast: &'a Ast,
     interner: &'a Interner,
@@ -37,7 +42,9 @@ impl<'a> Compiler<'a> {
             bytecode: Bytecode::new(),
             resolve_map,
             debug_info: Metadata::default(),
-            variables: Vec::default(),
+            locals: Vec::default(),
+            scopes: Vec::default(),
+            current_hoists: None,
             stack_depth: 0,
             ast,
             interner,
@@ -55,8 +62,8 @@ impl<'a> Compiler<'a> {
         let StmtL { stmt, loc } = self.ast.get_stmt(id);
         match stmt {
             Stmt::Expr { expr } => self.compile_expr(expr).map(|_| {
+                self.bytecode.emit_pop(1);
                 self.decr_depth(1);
-                self.bytecode.emit_pop();
             }),
             Stmt::Print { expr } => self.compile_print(expr),
             Stmt::Var { name, init } => self.compile_var(name, loc, init),
@@ -146,8 +153,8 @@ impl<'a> Compiler<'a> {
                     let (addr, patch) = self.bytecode.emit_jump(op);
                     self.debug_info.push_expr(loc, kind.into(), addr);
 
+                    self.bytecode.emit_pop(1);
                     self.decr_depth(1);
-                    self.bytecode.emit_pop();
 
                     self.compile_expr(right)?;
                     self.bytecode.patch_jump(patch);
@@ -158,8 +165,8 @@ impl<'a> Compiler<'a> {
                     let (addr, patch) = self.bytecode.emit_jump(op);
                     self.debug_info.push_expr(loc, kind.into(), addr);
 
+                    self.bytecode.emit_pop(1);
                     self.decr_depth(1);
-                    self.bytecode.emit_pop();
 
                     self.compile_expr(right)?;
                     self.bytecode.patch_jump(patch);
@@ -173,12 +180,12 @@ impl<'a> Compiler<'a> {
     fn compile_ref_expr(&mut self, expr: &RefExpr) -> Result<(), CompileError> {
         match expr {
             RefExpr::Variable { var } => {
-                let offset = self.get_variable(var.name).unwrap();
+                let offset = self.get_local(&var.name).unwrap();
                 self.bytecode.emit_load(LoadOp::Local(offset));
                 self.incr_depth(1);
             }
             RefExpr::Grouping { expr } => self.compile_expr(expr)?,
-            RefExpr::Assignment { var, value } => todo!(),
+            RefExpr::Assignment { var, value } => self.compile_assignment(&var.name, value)?,
             RefExpr::Get { object, prop } => todo!(),
             RefExpr::Set {
                 object,
@@ -188,6 +195,13 @@ impl<'a> Compiler<'a> {
             RefExpr::Super { prop } => todo!(),
             RefExpr::This => todo!(),
         };
+        Ok(())
+    }
+
+    fn compile_assignment(&mut self, name: &Key, value: &ExprId) -> Result<(), CompileError> {
+        self.compile_expr(value)?;
+        let offset = self.get_local(name).unwrap();
+        self.bytecode.emit_store(StoreOp::Local(offset));
         Ok(())
     }
 
@@ -219,12 +233,17 @@ impl<'a> Compiler<'a> {
             self.bytecode.current_address(),
             0,
         );
-        self.variables.push((*name, id));
+        self.locals.push((*name, id));
         Ok(())
     }
 
     fn compile_block(&mut self, statements: &[StmtId]) -> Result<(), CompileError> {
-        todo!()
+        self.new_scope();
+        for stmt in statements.iter() {
+            self.compile_stmt(stmt)?;
+        }
+        self.drop_scope();
+        Ok(())
     }
 
     fn compile_if(
@@ -233,11 +252,47 @@ impl<'a> Compiler<'a> {
         then: &StmtId,
         otherwise: &Option<StmtId>,
     ) -> Result<(), CompileError> {
-        todo!()
+        self.compile_expr(condition)?;
+
+        let (_, patch_cond) = self.bytecode.emit_jump(JumpOp::OnFalse(Address::default()));
+        self.compile_stmt(then)?;
+
+        match otherwise {
+            Some(stmt) => {
+                let (_, patch_then) = self
+                    .bytecode
+                    .emit_jump(JumpOp::Unconditional(Address::default()));
+                self.bytecode.patch_jump(patch_cond);
+                self.compile_stmt(stmt)?;
+                self.bytecode.patch_jump(patch_then);
+            }
+            _ => {
+                self.bytecode.patch_jump(patch_cond);
+            }
+        }
+
+        self.bytecode.emit_pop(1);
+        self.decr_depth(1);
+
+        Ok(())
     }
 
     fn compile_while(&mut self, condition: &ExprId, body: &StmtId) -> Result<(), CompileError> {
-        todo!()
+        let start = self.bytecode.current_address();
+
+        self.compile_expr(condition)?;
+        let (_, patch) = self.bytecode.emit_jump(JumpOp::OnFalse(Address::default()));
+
+        self.bytecode.emit_pop(1); // drop condition
+        self.decr_depth(1);
+        self.compile_stmt(body)?;
+
+        self.bytecode.emit_jump(JumpOp::Unconditional(start));
+
+        self.bytecode.patch_jump(patch);
+        self.bytecode.emit_pop(1); // drop condition
+
+        Ok(())
     }
 
     fn compile_function(&mut self, func: &StmtFunctionId) -> Result<(), CompileError> {
@@ -262,8 +317,22 @@ impl<'a> Compiler<'a> {
         todo!()
     }
 
-    fn get_variable(&self, key: Key) -> Option<Offset> {
-        let var = self.variables.iter().rev().find(|v| v.0 == key);
+    fn new_scope(&mut self) {
+        self.scopes.push(self.stack_depth);
+    }
+
+    fn drop_scope(&mut self) {
+        let until = self.scopes.pop().expect("scopes must not empty");
+        let delta = self.stack_depth - until;
+        if delta > 0 {
+            self.decr_depth(delta);
+            self.bytecode.emit_pop(delta);
+            self.locals.truncate(self.locals.len() - delta as usize);
+        }
+    }
+
+    fn get_local(&self, key: &Key) -> Option<Offset> {
+        let var = self.locals.iter().rev().find(|v| v.0 == *key);
         var.map(|v| self.debug_info.get_var(v.1)).map(|v| v.offset)
     }
 

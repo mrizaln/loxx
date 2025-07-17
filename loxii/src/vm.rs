@@ -3,7 +3,9 @@ use std::ops::Not;
 use boolinator::Boolinator;
 use thiserror::Error;
 
-use crate::bytecode::{Address, BinOp, Bytecode, BytecodeError, JumpOp, LoadOp, Op, UnaryOp};
+use crate::bytecode::{
+    Address, BinOp, Bytecode, BytecodeError, JumpOp, LoadOp, Offset, Op, StoreOp, UnaryOp,
+};
 use crate::memory::{Heap, HeapValue, MemoryError, Stack};
 use crate::value::{Constant, Value, ValueError};
 
@@ -45,16 +47,20 @@ impl Vm {
         let mut reader = program.into_iter();
 
         while let Some((_, op)) = reader.next() {
+            // let before = self.stack.len();
+            // let op_str = format!("{op:?}");
             match op? {
-                Op::Pop => self.stack.pop().map_or((), |_| {}),
+                Op::Pop(amount) => _ = self.stack.pop_multi(amount as usize),
                 Op::Upvalue => todo!(),
                 Op::Load(load_op) => self.interpret_load(load_op)?,
+                Op::Store(store_op) => self.interpret_store(store_op)?,
                 Op::Const(constant) => self.interpret_constant(constant),
                 Op::Jump(jump_op) => _ = self.interpret_jump(jump_op)?.map(|a| reader.jump(a)),
                 Op::Unary(unary_op) => self.interpret_unary(unary_op)?,
                 Op::Binary(bin_op) => self.interpret_binary(bin_op)?,
                 Op::Print => self.interpret_print()?,
             };
+            // println!("{:>2} -> {:>2} | {op_str}", before, self.stack.len());
         }
 
         Ok(())
@@ -66,6 +72,19 @@ impl Vm {
             LoadOp::Global(off) => todo!(),
             LoadOp::Upvalue(off) => todo!(),
         };
+        Ok(())
+    }
+
+    fn interpret_store(&mut self, op: StoreOp) -> Result<(), RuntimeError> {
+        match op {
+            StoreOp::Local(off) => {
+                let new_value = self.stack.top()?.clone();
+                let value = self.stack.peek_mut(self.abs_offset(&off))?;
+                *value = new_value;
+            }
+            StoreOp::Global(off) => todo!(),
+            StoreOp::Upvalue(off) => todo!(),
+        }
         Ok(())
     }
 
@@ -125,9 +144,13 @@ impl Vm {
         Ok(())
     }
 
-    fn interpret_print(&self) -> Result<(), RuntimeError> {
-        let value = self.stack.top()?;
+    fn interpret_print(&mut self) -> Result<(), RuntimeError> {
+        let value = self.stack.pop()?;
         println!("{}", value.display(&self.heap));
         Ok(())
+    }
+
+    fn abs_offset(&self, offset: &Offset) -> usize {
+        offset.0 as usize + self.stack_offset - 1
     }
 }

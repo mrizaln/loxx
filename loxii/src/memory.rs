@@ -13,8 +13,11 @@ pub struct Stack {
 
 #[derive(Debug, Error)]
 pub enum MemoryError {
-    #[error("Stack overflow (wants: {0:010x}, limit: {1:010x}")]
-    StackOverflow(usize, usize),
+    #[error("Stack overflow ({2} wants: {0:010x}, limit: {1:010x})")]
+    StackOverflow(usize, usize, &'static str),
+
+    #[error("Stack underflow ({2} wants: {0:010x}, limit: {1:010x})")]
+    StackUnderflow(usize, usize, &'static str),
 
     #[error("Stack is empty")]
     EmptyStack,
@@ -143,6 +146,10 @@ impl Stack {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
     pub fn create_block(&mut self) {
         self.blocks.push(self.values.len())
     }
@@ -168,6 +175,15 @@ impl Stack {
         self.values.pop().ok_or(MemoryError::EmptyStack)
     }
 
+    pub fn pop_multi(&mut self, amount: usize) -> Result<(), MemoryError> {
+        let len = self.values.len();
+        if amount > len {
+            return Err(MemoryError::StackUnderflow(amount, len, "pop"));
+        }
+        self.values.truncate(len - amount);
+        Ok(())
+    }
+
     pub fn top(&self) -> Result<&Value, MemoryError> {
         self.values.last().ok_or(MemoryError::EmptyStack)
     }
@@ -179,14 +195,14 @@ impl Stack {
     pub fn peek(&self, index: usize) -> Result<&Value, MemoryError> {
         self.values
             .get(index)
-            .ok_or(MemoryError::StackOverflow(index, self.values.len()))
+            .ok_or(MemoryError::StackOverflow(index, self.values.len(), "peek"))
     }
 
     pub fn peek_mut(&mut self, index: usize) -> Result<&mut Value, MemoryError> {
         let len = self.values.len();
         self.values
             .get_mut(index)
-            .ok_or(MemoryError::StackOverflow(index, len))
+            .ok_or(MemoryError::StackOverflow(index, len, "peek"))
     }
 }
 

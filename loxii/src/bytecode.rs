@@ -9,21 +9,30 @@ use thiserror::Error;
 
 use crate::value::Constant;
 
-#[derive(Debug, Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct Address(pub u32);
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct Offset(pub u32);
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct Patch(pub u32);
 
+#[derive(Debug)]
 pub enum LoadOp {
     Local(Offset),
     Global(Offset),
     Upvalue(Offset),
 }
 
+#[derive(Debug)]
+pub enum StoreOp {
+    Local(Offset),
+    Global(Offset),
+    Upvalue(Offset),
+}
+
+#[derive(Debug)]
 pub enum BinOp {
     Add,
     Sub,
@@ -37,21 +46,25 @@ pub enum BinOp {
     GreaterEq,
 }
 
+#[derive(Debug)]
 pub enum UnaryOp {
     Not,
     Negate,
 }
 
+#[derive(Debug)]
 pub enum JumpOp {
     Unconditional(Address),
     OnFalse(Address),
     OnTrue(Address),
 }
 
+#[derive(Debug)]
 pub enum Op<'a> {
-    Pop,
+    Pop(u32),
     Upvalue,
     Load(LoadOp),
+    Store(StoreOp),
     Const(Constant<'a>),
     Jump(JumpOp),
     Unary(UnaryOp),
@@ -94,23 +107,26 @@ enum OpValue {
     LoadLocal,
     LoadGlobal,
     LoadUpvalue,
+    StoreLocal,
+    StoreGlobal,
+    StoreUpvalue,
     Const,       // 1 byte type + (0 byte: nil, 0 byte: bool | 8 byte: number | N byte: string)
-    Jump,        // 4 byte op, 4 byte destination
-    JumpIfFalse, // 4 byte op, 4 byte destination
-    JumpIfTrue,  // 4 byte op, 4 byte destination
-    Add,         // 4 byte left op, 4 byte right op
-    Sub,         // 4 byte left op, 4 byte right op
-    Mul,         // 4 byte left op, 4 byte right op
-    Div,         // 4 byte left op, 4 byte right op
-    Equal,       // 4 byte left op, 4 byte right op
-    NotEqual,    // 4 byte left op, 4 byte right op
-    Less,        // 4 byte left op, 4 byte right op
-    LessEq,      // 4 byte left op, 4 byte right op
-    Greater,     // 4 byte left op, 4 byte right op
-    GreaterEq,   // 4 byte left op, 4 byte right op
-    Not,         // 4 byte op
-    Negate,      // 4 byte op
-    Print,       // 4 byte op
+    Jump,        // 4 byte destination
+    JumpIfFalse, // 4 byte destination
+    JumpIfTrue,  // 4 byte destination
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Equal,
+    NotEqual,
+    Less,
+    LessEq,
+    Greater,
+    GreaterEq,
+    Not,
+    Negate,
+    Print,
 }
 
 #[derive(Default)]
@@ -217,9 +233,10 @@ impl Bytecode {
         Address(addr as u32)
     }
 
-    pub fn emit_pop(&mut self) -> Address {
+    pub fn emit_pop(&mut self, amount: u32) -> Address {
         let index = self.code.len();
         self.code.push(OpValue::Pop as u8);
+        self.code.extend(amount.to_be_bytes());
         Address(index as u32)
     }
 
@@ -235,6 +252,18 @@ impl Bytecode {
             LoadOp::Local(offset) => (OpValue::LoadLocal, offset),
             LoadOp::Global(offset) => (OpValue::LoadGlobal, offset),
             LoadOp::Upvalue(offset) => (OpValue::LoadUpvalue, offset),
+        };
+        self.code.push(op as u8);
+        self.code.extend(off.to_be_bytes());
+        Address(index as u32)
+    }
+
+    pub fn emit_store(&mut self, op: StoreOp) -> Address {
+        let index = self.code.len();
+        let (op, off) = match op {
+            StoreOp::Local(offset) => (OpValue::StoreLocal, offset),
+            StoreOp::Global(offset) => (OpValue::StoreGlobal, offset),
+            StoreOp::Upvalue(offset) => (OpValue::StoreUpvalue, offset),
         };
         self.code.push(op as u8);
         self.code.extend(off.to_be_bytes());
@@ -406,8 +435,11 @@ impl<'a> Iterator for BytecodeReader<'a> {
             .map_err(|_| BytecodeError::InvalidOp(index as u32));
 
         let op = byte.and_then(|op| match op {
-            OpValue::Pop => Ok(Op::Pop),
-            OpValue::Upvalue => Ok(Op::Pop),
+            OpValue::Pop => {
+                let amount = u32::from_be_bytes(self.advance());
+                Ok(Op::Pop(amount))
+            }
+            OpValue::Upvalue => Ok(Op::Upvalue),
             OpValue::LoadLocal => {
                 let offset = self.advance().into();
                 Ok(Op::Load(LoadOp::Local(offset)))
@@ -419,6 +451,18 @@ impl<'a> Iterator for BytecodeReader<'a> {
             OpValue::LoadUpvalue => {
                 let offset = self.advance().into();
                 Ok(Op::Load(LoadOp::Upvalue(offset)))
+            }
+            OpValue::StoreLocal => {
+                let offset = self.advance().into();
+                Ok(Op::Store(StoreOp::Local(offset)))
+            }
+            OpValue::StoreGlobal => {
+                let offset = self.advance().into();
+                Ok(Op::Store(StoreOp::Local(offset)))
+            }
+            OpValue::StoreUpvalue => {
+                let offset = self.advance().into();
+                Ok(Op::Store(StoreOp::Local(offset)))
             }
             OpValue::Const => {
                 let byte = self.advance_one();
@@ -478,15 +522,20 @@ impl Display for DisplayedBytecode<'_> {
             match op {
                 Err(_) => writeln!(f, "ERROR"),
                 Ok(op) => match op {
-                    Op::Pop => writeln!(f, "POP"),
-                    Op::Upvalue => writeln!(f, "UPVALUE"),
+                    Op::Pop(v) => writeln!(f, "{:<16} {:010x}", "POP", v),
+                    Op::Upvalue => writeln!(f, "{:<16}", "UPVALUE"),
                     Op::Load(load_op) => match load_op {
-                        LoadOp::Local(o) => writeln!(f, "{:<12} {:010x}", "LOAD_LOCAL", o.0),
-                        LoadOp::Global(o) => writeln!(f, "{:<12} {:010x}", "LOAD_GLOBAL", o.0),
-                        LoadOp::Upvalue(o) => writeln!(f, "{:<12} {:010x}", "LOAD_UPVALUE", o.0),
+                        LoadOp::Local(o) => writeln!(f, "{:<16} {:010x}", "LOAD_LOCAL", o.0),
+                        LoadOp::Global(o) => writeln!(f, "{:<16} {:010x}", "LOAD_GLOBAL", o.0),
+                        LoadOp::Upvalue(o) => writeln!(f, "{:<16} {:010x}", "LOAD_UPVALUE", o.0),
+                    },
+                    Op::Store(store_op) => match store_op {
+                        StoreOp::Local(o) => writeln!(f, "{:<16} {:010x}", "STORE_LOCAL", o.0),
+                        StoreOp::Global(o) => writeln!(f, "{:<16} {:010x}", "STORE_GLOBAL", o.0),
+                        StoreOp::Upvalue(o) => writeln!(f, "{:<16} {:010x}", "STORE_UPVALUE", o.0),
                     },
                     Op::Const(constant) => {
-                        write!(f, "{:<12}", "CONST")?;
+                        write!(f, "{:<16}", "CONST")?;
                         match constant {
                             Constant::Nil => writeln!(f, " {:<10}", "nil"),
                             Constant::Bool(b) => writeln!(f, " {b:<10}"),
@@ -495,27 +544,27 @@ impl Display for DisplayedBytecode<'_> {
                         }
                     }
                     Op::Jump(jump_op) => match jump_op {
-                        JumpOp::Unconditional(a) => writeln!(f, "{:<12} {:>08x}", "JMP", a.0),
-                        JumpOp::OnFalse(a) => writeln!(f, "{:<12} {:>010x}", "JMP_FALSE", a.0),
-                        JumpOp::OnTrue(a) => writeln!(f, "{:<12} {:>010x}", "JMP_TRUE", a.0),
+                        JumpOp::Unconditional(a) => writeln!(f, "{:<16} {:>010x}", "JMP", a.0),
+                        JumpOp::OnFalse(a) => writeln!(f, "{:<16} {:>010x}", "JMP_FALSE", a.0),
+                        JumpOp::OnTrue(a) => writeln!(f, "{:<16} {:>010x}", "JMP_TRUE", a.0),
                     },
                     Op::Unary(unary_op) => match unary_op {
-                        UnaryOp::Not => writeln!(f, "{:<12}", "NOT"),
-                        UnaryOp::Negate => writeln!(f, "{:<12}", "NEGATE"),
+                        UnaryOp::Not => writeln!(f, "{:<16}", "NOT"),
+                        UnaryOp::Negate => writeln!(f, "{:<16}", "NEGATE"),
                     },
                     Op::Binary(bin_op) => match bin_op {
-                        BinOp::Add => writeln!(f, "{:<12}", "ADD",),
-                        BinOp::Sub => writeln!(f, "{:<12}", "SUB",),
-                        BinOp::Mul => writeln!(f, "{:<12}", "MUL",),
-                        BinOp::Div => writeln!(f, "{:<12}", "DIV",),
-                        BinOp::Equal => writeln!(f, "{:<12}", "EQ",),
-                        BinOp::NotEqual => writeln!(f, "{:<12}", "NEQ",),
-                        BinOp::Less => writeln!(f, "{:<12}", "LT",),
-                        BinOp::LessEq => writeln!(f, "{:<12}", "LE",),
-                        BinOp::Greater => writeln!(f, "{:<12}", "GT",),
-                        BinOp::GreaterEq => writeln!(f, "{:<12}", "GE",),
+                        BinOp::Add => writeln!(f, "{:<16}", "ADD",),
+                        BinOp::Sub => writeln!(f, "{:<16}", "SUB",),
+                        BinOp::Mul => writeln!(f, "{:<16}", "MUL",),
+                        BinOp::Div => writeln!(f, "{:<16}", "DIV",),
+                        BinOp::Equal => writeln!(f, "{:<16}", "EQ",),
+                        BinOp::NotEqual => writeln!(f, "{:<16}", "NEQ",),
+                        BinOp::Less => writeln!(f, "{:<16}", "LT",),
+                        BinOp::LessEq => writeln!(f, "{:<16}", "LE",),
+                        BinOp::Greater => writeln!(f, "{:<16}", "GT",),
+                        BinOp::GreaterEq => writeln!(f, "{:<16}", "GE",),
                     },
-                    Op::Print => writeln!(f, "{:<12}", "PRINT"),
+                    Op::Print => writeln!(f, "{:<16}", "PRINT"),
                 },
             }?
         }
