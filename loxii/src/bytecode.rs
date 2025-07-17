@@ -1,29 +1,45 @@
 use core::str;
 use std::fmt::Display;
 use std::mem::transmute;
+use std::str::Utf8Error;
+
+use loxi::interner::{Interner, Key};
+use rustc_hash::FxHashMap;
+use thiserror::Error;
 
 use crate::value::Constant;
 
-pub struct Address(u32);
+#[derive(Debug, Copy, Clone, Default)]
+pub struct Address(pub u32);
 
-pub struct Offset(pub u16);
+#[derive(Copy, Clone, Default)]
+pub struct Offset(pub u32);
+
+#[derive(Copy, Clone, Default)]
+pub struct Patch(pub u32);
+
+pub enum LoadOp {
+    Local(Offset),
+    Global(Offset),
+    Upvalue(Offset),
+}
 
 pub enum BinOp {
-    Add(Offset, Offset),
-    Sub(Offset, Offset),
-    Mul(Offset, Offset),
-    Div(Offset, Offset),
-    Equal(Offset, Offset),
-    NotEqual(Offset, Offset),
-    Less(Offset, Offset),
-    LessEq(Offset, Offset),
-    Greater(Offset, Offset),
-    GreaterEq(Offset, Offset),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Equal,
+    NotEqual,
+    Less,
+    LessEq,
+    Greater,
+    GreaterEq,
 }
 
 pub enum UnaryOp {
-    Not(Offset),
-    Negate(Offset),
+    Not,
+    Negate,
 }
 
 pub enum JumpOp {
@@ -34,15 +50,37 @@ pub enum JumpOp {
 
 pub enum Op<'a> {
     Pop,
+    Upvalue,
+    Load(LoadOp),
     Const(Constant<'a>),
     Jump(JumpOp),
     Unary(UnaryOp),
     Binary(BinOp),
+    Print,
+}
+
+pub enum ConstKind {
+    Nil,
+    Bool(bool),
+    Number(Address),
+    String(Address),
+}
+
+#[derive(Debug, Error)]
+pub enum BytecodeError {
+    #[error("Encoded bytecode operation is invalid at {0:010x}")]
+    InvalidOp(u32),
+
+    #[error("{1} at {0:010x}")]
+    StringError(u32, Utf8Error),
+
+    #[error("Unterminated string literal at {0:010x}")]
+    UnerminatedString(u32),
 }
 
 #[repr(u8)]
 #[derive(Debug)]
-enum ConstType {
+enum ConstKindValue {
     Nil,
     Bool,
     Number,
@@ -52,27 +90,33 @@ enum ConstType {
 #[repr(u8)]
 enum OpValue {
     Pop,
+    Upvalue,
+    LoadLocal,
+    LoadGlobal,
+    LoadUpvalue,
     Const,       // 1 byte type + (0 byte: nil, 0 byte: bool | 8 byte: number | N byte: string)
-    Jump,        // 4 byte: destination offset in code
-    JumpIfFalse, // 4 byte: destination offset in code
-    JumpIfTrue,  // 4 byte: destination offset in code
-    Add,         // 2 byte left op 2 byte right op
-    Sub,         // 2 byte left op 2 byte right op
-    Mul,         // 2 byte left op 2 byte right op
-    Div,         // 2 byte left op 2 byte right op
-    Equal,       // 2 byte left op 2 byte right op
-    NotEqual,    // 2 byte left op 2 byte right op
-    Less,        // 2 byte left op 2 byte right op
-    LessEq,      // 2 byte left op 2 byte right op
-    Greater,     // 2 byte left op 2 byte right op
-    GreaterEq,   // 2 byte left op 2 byte right op
-    Not,         // 2 byte op
-    Negate,      // 2 byte op
+    Jump,        // 4 byte op, 4 byte destination
+    JumpIfFalse, // 4 byte op, 4 byte destination
+    JumpIfTrue,  // 4 byte op, 4 byte destination
+    Add,         // 4 byte left op, 4 byte right op
+    Sub,         // 4 byte left op, 4 byte right op
+    Mul,         // 4 byte left op, 4 byte right op
+    Div,         // 4 byte left op, 4 byte right op
+    Equal,       // 4 byte left op, 4 byte right op
+    NotEqual,    // 4 byte left op, 4 byte right op
+    Less,        // 4 byte left op, 4 byte right op
+    LessEq,      // 4 byte left op, 4 byte right op
+    Greater,     // 4 byte left op, 4 byte right op
+    GreaterEq,   // 4 byte left op, 4 byte right op
+    Not,         // 4 byte op
+    Negate,      // 4 byte op
+    Print,       // 4 byte op
 }
 
 #[derive(Default)]
 pub struct Bytecode {
     constant: Vec<u8>,
+    constant_map: FxHashMap<Key, Address>,
     global: Vec<u8>,
     code: Vec<u8>,
 }
@@ -100,28 +144,52 @@ impl TryFrom<u8> for OpValue {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         let lowest = OpValue::Pop as u8;
-        let highest = OpValue::Negate as u8;
+        let highest = OpValue::Print as u8;
 
-        if value <= highest && value >= lowest {
-            unsafe { Ok(transmute::<u8, OpValue>(value)) }
-        } else {
-            Err(())
+        match value <= highest && value >= lowest {
+            true => unsafe { Ok(transmute::<u8, OpValue>(value)) },
+            false => Err(()),
         }
     }
 }
 
-impl TryFrom<u8> for ConstType {
+impl TryFrom<u8> for ConstKindValue {
     type Error = ();
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        let lowest = ConstType::Nil as u8;
-        let highest = ConstType::String as u8;
+        let lowest = ConstKindValue::Nil as u8;
+        let highest = ConstKindValue::String as u8;
 
-        if value <= highest && value >= lowest {
-            unsafe { Ok(transmute::<u8, ConstType>(value)) }
-        } else {
-            Err(())
+        match value <= highest && value >= lowest {
+            true => unsafe { Ok(transmute::<u8, ConstKindValue>(value)) },
+            false => Err(()),
         }
+    }
+}
+
+impl Address {
+    pub fn to_be_bytes(self) -> [u8; size_of::<u32>()] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl From<[u8; size_of::<u32>()]> for Address {
+    fn from(value: [u8; size_of::<u32>()]) -> Self {
+        let num = u32::from_be_bytes(value);
+        Self(num)
+    }
+}
+
+impl Offset {
+    pub fn to_be_bytes(self) -> [u8; size_of::<u32>()] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl From<[u8; size_of::<u32>()]> for Offset {
+    fn from(value: [u8; size_of::<u32>()]) -> Self {
+        let num = u32::from_be_bytes(value);
+        Self(num)
     }
 }
 
@@ -130,80 +198,124 @@ impl Bytecode {
         Self::default()
     }
 
-    pub fn create_constant(&mut self, constant: Constant) -> Address {
-        let addr = self.constant.len();
+    pub fn create_constant_string(&mut self, key: Key, interner: &Interner) -> Address {
+        if let Some(addr) = self.constant_map.get(&key) {
+            return *addr;
+        };
 
-        // only 2 msb bit is used for the type detection
-        match constant {
-            Constant::Nil => {
-                let byte = (ConstType::Nil as u8) << 6;
-                self.constant.push(byte);
-            }
-            Constant::Bool(b) => {
-                let byte = (ConstType::Bool as u8) << 6;
-                self.constant.push(byte | if b { 1 } else { 0 });
-            }
-            Constant::Number(n) => {
-                let byte = (ConstType::Number as u8) << 6;
-                self.constant.push(byte);
-                let num_bytes = n.to_be_bytes();
-                self.constant.extend(num_bytes);
-            }
-            Constant::String(s) => {
-                let byte = (ConstType::String as u8) << 6;
-                self.constant.push(byte);
-                self.constant.extend(s.as_bytes());
-                self.constant.push(b'\0');
-            }
-        }
+        let str = interner.resolve(key);
+        let addr = self.constant.len();
+        self.constant.extend(str.as_bytes());
+        self.constant.push(b'\0');
 
         Address(addr as u32)
     }
 
-    pub fn emit_pop(&mut self) {
+    pub fn create_consant_num(&mut self, num: f64) -> Address {
+        let addr = self.constant.len();
+        self.constant.extend(num.to_be_bytes());
+        Address(addr as u32)
+    }
+
+    pub fn emit_pop(&mut self) -> Address {
+        let index = self.code.len();
         self.code.push(OpValue::Pop as u8);
+        Address(index as u32)
     }
 
-    pub fn emit_constant(&mut self, addr: Address) {
+    pub fn emit_upvalue(&mut self) -> Address {
+        let index = self.code.len();
+        self.code.push(OpValue::Upvalue as u8);
+        Address(index as u32)
+    }
+
+    pub fn emit_load(&mut self, op: LoadOp) -> Address {
+        let index = self.code.len();
+        let (op, off) = match op {
+            LoadOp::Local(offset) => (OpValue::LoadLocal, offset),
+            LoadOp::Global(offset) => (OpValue::LoadGlobal, offset),
+            LoadOp::Upvalue(offset) => (OpValue::LoadUpvalue, offset),
+        };
+        self.code.push(op as u8);
+        self.code.extend(off.to_be_bytes());
+        Address(index as u32)
+    }
+
+    pub fn emit_print(&mut self) -> Address {
+        let index = self.code.len();
+        self.code.push(OpValue::Print as u8);
+        Address(index as u32)
+    }
+
+    pub fn emit_constant(&mut self, kind: ConstKind) -> Address {
+        let index = self.code.len();
         self.code.push(OpValue::Const as u8);
-        self.code.extend(addr.0.to_be_bytes());
+        match kind {
+            ConstKind::Nil => self.code.push((ConstKindValue::Nil as u8) << 6),
+            ConstKind::Bool(b) => {
+                let byte = (ConstKindValue::Bool as u8) << 6;
+                self.code.push(byte | if b { 1 } else { 0 });
+            }
+            ConstKind::Number(address) => {
+                self.code.push((ConstKindValue::Number as u8) << 6);
+                self.code.extend(address.0.to_be_bytes());
+            }
+            ConstKind::String(address) => {
+                self.code.push((ConstKindValue::String as u8) << 6);
+                self.code.extend(address.0.to_be_bytes());
+            }
+        }
+        Address(index as u32)
     }
 
-    pub fn emit_jump(&mut self, jump: JumpOp) {
+    pub fn emit_jump(&mut self, jump: JumpOp) -> (Address, Patch) {
+        let start = self.code.len();
         let (kind, addr) = match jump {
             JumpOp::Unconditional(addr) => (OpValue::Jump, addr.0),
             JumpOp::OnFalse(addr) => (OpValue::JumpIfFalse, addr.0),
             JumpOp::OnTrue(addr) => (OpValue::JumpIfTrue, addr.0),
         };
         self.code.push(kind as u8);
+
+        let index = self.code.len();
         self.code.extend(addr.to_be_bytes());
+
+        (Address(start as u32), Patch(index as u32))
     }
 
-    pub fn emit_unary(&mut self, unary_op: UnaryOp) {
-        let (kind, opd) = match unary_op {
-            UnaryOp::Not(opd) => (OpValue::Not, opd),
-            UnaryOp::Negate(opd) => (OpValue::Negate, opd),
+    pub fn emit_unary(&mut self, unary_op: UnaryOp) -> Address {
+        let index = self.code.len();
+        let kind = match unary_op {
+            UnaryOp::Not => OpValue::Not,
+            UnaryOp::Negate => OpValue::Negate,
         };
         self.code.push(kind as u8);
-        self.code.extend(opd.0.to_be_bytes());
+        Address(index as u32)
     }
 
-    pub fn emit_binary(&mut self, bin_op: BinOp) {
-        let (kind, lhs, rhs) = match bin_op {
-            BinOp::Add(lhs, rhs) => (OpValue::Add, lhs, rhs),
-            BinOp::Sub(lhs, rhs) => (OpValue::Sub, lhs, rhs),
-            BinOp::Mul(lhs, rhs) => (OpValue::Mul, lhs, rhs),
-            BinOp::Div(lhs, rhs) => (OpValue::Div, lhs, rhs),
-            BinOp::Equal(lhs, rhs) => (OpValue::Equal, lhs, rhs),
-            BinOp::NotEqual(lhs, rhs) => (OpValue::NotEqual, lhs, rhs),
-            BinOp::Less(lhs, rhs) => (OpValue::Less, lhs, rhs),
-            BinOp::LessEq(lhs, rhs) => (OpValue::LessEq, lhs, rhs),
-            BinOp::Greater(lhs, rhs) => (OpValue::Greater, lhs, rhs),
-            BinOp::GreaterEq(lhs, rhs) => (OpValue::GreaterEq, lhs, rhs),
+    pub fn emit_binary(&mut self, bin_op: BinOp) -> Address {
+        let index = self.code.len();
+        let op = match bin_op {
+            BinOp::Add => OpValue::Add,
+            BinOp::Sub => OpValue::Sub,
+            BinOp::Mul => OpValue::Mul,
+            BinOp::Div => OpValue::Div,
+            BinOp::Equal => OpValue::Equal,
+            BinOp::NotEqual => OpValue::NotEqual,
+            BinOp::Less => OpValue::Less,
+            BinOp::LessEq => OpValue::LessEq,
+            BinOp::Greater => OpValue::Greater,
+            BinOp::GreaterEq => OpValue::GreaterEq,
         };
-        self.code.push(kind as u8);
-        self.code.extend(lhs.0.to_be_bytes());
-        self.code.extend(rhs.0.to_be_bytes());
+        self.code.push(op as u8);
+        Address(index as u32)
+    }
+
+    pub fn patch_jump(&mut self, patch: Patch) {
+        let current = (self.code.len() as u32).to_be_bytes();
+        let index = patch.0 as usize;
+        let slice = &mut self.code[index..index + 4];
+        slice.copy_from_slice(&current);
     }
 
     pub fn display(&self) -> DisplayedBytecode {
@@ -211,35 +323,38 @@ impl Bytecode {
             reader: self.into_iter(),
         }
     }
+
+    pub fn current_address(&self) -> Address {
+        Address(self.code.len() as u32)
+    }
 }
 
 impl<'a> BytecodeReader<'a> {
+    pub fn reset(&mut self) {
+        self.index = 0;
+    }
+
     pub fn jump(&mut self, address: Address) {
         self.index = address.0 as usize;
     }
 
-    pub fn read_constant(&self, addr: Address) -> Result<Constant<'a>, ()> {
+    pub fn read_constant_num(&self, addr: Address) -> f64 {
         let index = addr.0 as usize;
         let slice = &self.constant[index..];
 
-        let byte = slice[0];
-        let kind = (byte >> 6).try_into()?;
-        match kind {
-            ConstType::Nil => Ok(Constant::Nil),
-            ConstType::Bool => Ok(Constant::Bool((byte & 1) == 1)),
-            ConstType::Number => {
-                let mut num = [0; 8];
-                num.copy_from_slice(&slice[1..9]);
-                let num = f64::from_be_bytes(num);
-                Ok(Constant::Number(num))
-            }
-            ConstType::String => {
-                let slice = &slice[1..];
-                let size = slice.iter().position(|v| *v == b'\0').unwrap();
-                let string = str::from_utf8(&slice[..size]).unwrap();
-                Ok(Constant::String(string))
-            }
-        }
+        let mut num = [0; 8];
+        num.copy_from_slice(&slice[..8]);
+        f64::from_be_bytes(num)
+    }
+
+    pub fn read_constant_string(&self, addr: Address) -> Result<&'a str, BytecodeError> {
+        let index = addr.0 as usize;
+        let slice = &self.constant[index..];
+        let size = slice
+            .iter()
+            .position(|v| *v == b'\0')
+            .ok_or(BytecodeError::UnerminatedString(addr.0))?;
+        str::from_utf8(&slice[..size]).map_err(|e| BytecodeError::StringError(addr.0, e))
     }
 
     fn advance_one(&mut self) -> u8 {
@@ -277,161 +392,130 @@ impl<'a> IntoIterator for &'a Bytecode {
 }
 
 impl<'a> Iterator for BytecodeReader<'a> {
-    type Item = Result<Op<'a>, ()>;
+    type Item = (Address, Result<Op<'a>, BytecodeError>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.code.len() {
             return None;
         }
 
-        let byte = self.advance_one().try_into();
+        let index = self.index;
+        let byte = self
+            .advance_one()
+            .try_into()
+            .map_err(|_| BytecodeError::InvalidOp(index as u32));
 
-        Some(byte.and_then(|op| match op {
+        let op = byte.and_then(|op| match op {
             OpValue::Pop => Ok(Op::Pop),
+            OpValue::Upvalue => Ok(Op::Pop),
+            OpValue::LoadLocal => {
+                let offset = self.advance().into();
+                Ok(Op::Load(LoadOp::Local(offset)))
+            }
+            OpValue::LoadGlobal => {
+                let offset = self.advance().into();
+                Ok(Op::Load(LoadOp::Global(offset)))
+            }
+            OpValue::LoadUpvalue => {
+                let offset = self.advance().into();
+                Ok(Op::Load(LoadOp::Upvalue(offset)))
+            }
             OpValue::Const => {
-                let addr = Address(u32::from_be_bytes(self.advance()));
-                Ok(Op::Const(self.read_constant(addr)?))
+                let byte = self.advance_one();
+                let kind = (byte >> 6)
+                    .try_into()
+                    .map_err(|_| BytecodeError::InvalidOp(index as u32))?;
+                let val = match kind {
+                    ConstKindValue::Nil => Constant::Nil,
+                    ConstKindValue::Bool => Constant::Bool(byte & 1 == 1),
+                    ConstKindValue::Number => {
+                        let addr = self.advance().into();
+                        Constant::Number(self.read_constant_num(addr))
+                    }
+                    ConstKindValue::String => {
+                        let addr = self.advance().into();
+                        Constant::String(self.read_constant_string(addr)?)
+                    }
+                };
+                Ok(Op::Const(val))
             }
             OpValue::Jump => {
-                let addr = u32::from_be_bytes(self.advance());
-                Ok(Op::Jump(JumpOp::Unconditional(Address(addr))))
+                let addr = self.advance().into();
+                Ok(Op::Jump(JumpOp::Unconditional(addr)))
             }
             OpValue::JumpIfFalse => {
-                let addr = u32::from_be_bytes(self.advance());
-                Ok(Op::Jump(JumpOp::OnFalse(Address(addr))))
+                let addr = self.advance().into();
+                Ok(Op::Jump(JumpOp::OnFalse(addr)))
             }
             OpValue::JumpIfTrue => {
-                let addr = u32::from_be_bytes(self.advance());
-                Ok(Op::Jump(JumpOp::OnTrue(Address(addr))))
+                let addr = self.advance().into();
+                Ok(Op::Jump(JumpOp::OnTrue(addr)))
             }
-            OpValue::Add => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Add(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Sub => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Sub(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Mul => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Mul(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Div => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Div(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Equal => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Equal(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::NotEqual => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::NotEqual(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Less => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Less(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::LessEq => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::LessEq(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Greater => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::Greater(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::GreaterEq => {
-                let lhs = u16::from_be_bytes(self.advance());
-                let rhs = u16::from_be_bytes(self.advance());
-                Ok(Op::Binary(BinOp::GreaterEq(Offset(lhs), Offset(rhs))))
-            }
-            OpValue::Not => {
-                let opnd = u16::from_be_bytes(self.advance());
-                Ok(Op::Unary(UnaryOp::Not(Offset(opnd))))
-            }
-            OpValue::Negate => {
-                let opnd = u16::from_be_bytes(self.advance());
-                Ok(Op::Unary(UnaryOp::Negate(Offset(opnd))))
-            }
-        }))
+            OpValue::Add => Ok(Op::Binary(BinOp::Add)),
+            OpValue::Sub => Ok(Op::Binary(BinOp::Sub)),
+            OpValue::Mul => Ok(Op::Binary(BinOp::Mul)),
+            OpValue::Div => Ok(Op::Binary(BinOp::Div)),
+            OpValue::Equal => Ok(Op::Binary(BinOp::Equal)),
+            OpValue::NotEqual => Ok(Op::Binary(BinOp::NotEqual)),
+            OpValue::Less => Ok(Op::Binary(BinOp::Less)),
+            OpValue::LessEq => Ok(Op::Binary(BinOp::LessEq)),
+            OpValue::Greater => Ok(Op::Binary(BinOp::Greater)),
+            OpValue::GreaterEq => Ok(Op::Binary(BinOp::GreaterEq)),
+            OpValue::Not => Ok(Op::Unary(UnaryOp::Not)),
+            OpValue::Negate => Ok(Op::Unary(UnaryOp::Negate)),
+            OpValue::Print => Ok(Op::Print),
+        });
+
+        Some((Address(index as u32), op))
     }
 }
 
 impl Display for DisplayedBytecode<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let reader = self.reader.clone();
-        for op in reader.into_iter() {
+        for (addr, op) in reader.into_iter() {
+            write!(f, "{:<010x} ", addr.0)?;
             match op {
                 Err(_) => writeln!(f, "ERROR"),
                 Ok(op) => match op {
                     Op::Pop => writeln!(f, "POP"),
+                    Op::Upvalue => writeln!(f, "UPVALUE"),
+                    Op::Load(load_op) => match load_op {
+                        LoadOp::Local(o) => writeln!(f, "{:<12} {:010x}", "LOAD_LOCAL", o.0),
+                        LoadOp::Global(o) => writeln!(f, "{:<12} {:010x}", "LOAD_GLOBAL", o.0),
+                        LoadOp::Upvalue(o) => writeln!(f, "{:<12} {:010x}", "LOAD_UPVALUE", o.0),
+                    },
                     Op::Const(constant) => {
-                        write!(f, "{:<16}", "CONSTANT")?;
+                        write!(f, "{:<12}", "CONST")?;
                         match constant {
                             Constant::Nil => writeln!(f, " {:<10}", "nil"),
                             Constant::Bool(b) => writeln!(f, " {b:<10}"),
-                            Constant::Number(n) => writeln!(f, " {n:<10e}"),
+                            Constant::Number(n) => writeln!(f, "'{n:<10}"),
                             Constant::String(s) => writeln!(f, " {s:?}"),
                         }
                     }
                     Op::Jump(jump_op) => match jump_op {
-                        JumpOp::Unconditional(address) => {
-                            writeln!(f, "{:<16} {:>010x}", "JUMP", address.0)
-                        }
-                        JumpOp::OnFalse(address) => {
-                            writeln!(f, "{:<16} {:>010x}", "JUMP_IF_FALSE", address.0)
-                        }
-                        JumpOp::OnTrue(address) => {
-                            writeln!(f, "{:<16} {:>010x}", "JUMP_IF_TRUE", address.0)
-                        }
+                        JumpOp::Unconditional(a) => writeln!(f, "{:<12} {:>08x}", "JMP", a.0),
+                        JumpOp::OnFalse(a) => writeln!(f, "{:<12} {:>010x}", "JMP_FALSE", a.0),
+                        JumpOp::OnTrue(a) => writeln!(f, "{:<12} {:>010x}", "JMP_TRUE", a.0),
                     },
                     Op::Unary(unary_op) => match unary_op {
-                        UnaryOp::Not(offset) => writeln!(f, "{:<16} {:>010x}", "NOT", offset.0),
-                        UnaryOp::Negate(offset) => {
-                            writeln!(f, "{:<16} {:>010x}", "NEGATE", offset.0)
-                        }
+                        UnaryOp::Not => writeln!(f, "{:<12}", "NOT"),
+                        UnaryOp::Negate => writeln!(f, "{:<12}", "NEGATE"),
                     },
                     Op::Binary(bin_op) => match bin_op {
-                        BinOp::Add(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "ADD", lhs.0, rhs.0)
-                        }
-                        BinOp::Sub(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "SUB", lhs.0, rhs.0)
-                        }
-                        BinOp::Mul(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "MUL", lhs.0, rhs.0)
-                        }
-                        BinOp::Div(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "DIV", lhs.0, rhs.0)
-                        }
-                        BinOp::Equal(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "EQ", lhs.0, rhs.0)
-                        }
-                        BinOp::NotEqual(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "NEQ", lhs.0, rhs.0)
-                        }
-                        BinOp::Less(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "LT", lhs.0, rhs.0)
-                        }
-                        BinOp::LessEq(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "LE", lhs.0, rhs.0)
-                        }
-                        BinOp::Greater(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "GT", lhs.0, rhs.0)
-                        }
-                        BinOp::GreaterEq(lhs, rhs) => {
-                            writeln!(f, "{:<16} {:>010x} {:>010x}", "GE", lhs.0, rhs.0)
-                        }
+                        BinOp::Add => writeln!(f, "{:<12}", "ADD",),
+                        BinOp::Sub => writeln!(f, "{:<12}", "SUB",),
+                        BinOp::Mul => writeln!(f, "{:<12}", "MUL",),
+                        BinOp::Div => writeln!(f, "{:<12}", "DIV",),
+                        BinOp::Equal => writeln!(f, "{:<12}", "EQ",),
+                        BinOp::NotEqual => writeln!(f, "{:<12}", "NEQ",),
+                        BinOp::Less => writeln!(f, "{:<12}", "LT",),
+                        BinOp::LessEq => writeln!(f, "{:<12}", "LE",),
+                        BinOp::Greater => writeln!(f, "{:<12}", "GT",),
+                        BinOp::GreaterEq => writeln!(f, "{:<12}", "GE",),
                     },
+                    Op::Print => writeln!(f, "{:<12}", "PRINT"),
                 },
             }?
         }
