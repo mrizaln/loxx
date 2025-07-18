@@ -24,7 +24,7 @@ from argparse import (
 from collections.abc import Callable
 from contextlib import chdir
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from os import system
 from os.path import dirname, realpath
 from pathlib import Path
@@ -48,6 +48,12 @@ RUNTIME_ERROR_RE = re.compile(r"\[(\d+):(\d+)\] RuntimeError: (.+)")
 
 # TODO: I haven't got this far :>
 STACK_TRACE_RE = re.compile(r"\[line (\d+)\]")
+
+
+class Output(IntEnum):
+    QUIET = 0
+    NORMAL = 1
+    VERBOSE = 2
 
 
 class Variant(Enum):
@@ -263,14 +269,14 @@ class Test:
         self,
         interpreter: Interpreter,
         filter_path: Filter | None,
-        print_output: bool = False,
+        output: Output = Output.NORMAL,
         timeout_sec: float = -1.0,  # if timeout_ms is zero or less than zero, no timeout will be set
     ):
         self.interpreter = interpreter
         self.expectations: int = 0
         self.failures: Dict[Path, List[str]] = {}
         self.filter: Filter | None = filter_path
-        self.print_output: bool = print_output
+        self.output: Output = output
         self.timeout_sec: float = timeout_sec
 
     def run_all(self) -> Result:
@@ -380,22 +386,20 @@ class Test:
         stderr = proc.stderr
         returncode = proc.returncode
 
-        # panic!
-        if returncode == 101:
-            printfl(stderr)
-            printfl("=" * 80)
-            printfl("...")
-            return False
-
         if self._validate(test, expect, stdout, stderr, returncode):
             printfl(f"{Cm.u()}{Cs.g('PASSED')}")
-            if self.print_output:
+            if self.output >= Output.VERBOSE:
                 pprint(stdout, stderr)
             return True
-        else:
-            printfl(f"{Cm.u()}{Cs.r('FAILED')}")
-            [printfl(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
+        elif returncode == 101:  # panicked!
+            printfl(f"{Cm.u()}{Cs.r('FAILED (panic!)')}")
             pprint(stdout, stderr)
+            return False
+        else:
+            printfl(f"{Cm.u()}{Cs.r('FAILED')} (normal)")
+            [printfl(f"\t\t- {Cs.y(f)}") for f in self.failures[test]]
+            if self.output >= Output.NORMAL:
+                pprint(stdout, stderr)
             return False
 
     def _filter(self, path: Path) -> bool:
@@ -443,12 +447,15 @@ class Test:
         lines = real.splitlines()
 
         if (e := len(expect)) != (r := len(lines)):
-            self._fail(test, f"Got differing output length: expect '{e}', got '{r}'")
+            self._fail(
+                test,
+                f"Got differing output length: \n\t> expect '{e}', \n\t> got '{r}'",
+            )
 
-        for (_, e), r in zip(expect, lines):
+        for i, ((_, e), r) in enumerate(zip(expect, lines)):
             if e != r:
                 success = False
-                self._fail(test, f"Expected '{e}', got '{r}'")
+                self._fail(test, f"[{i + 1}] Expected '{e}', got '{r}'")
 
         return success
 
@@ -532,11 +539,26 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "-l",
+        help="List chapters being tested on specified interpreter",
+        action="store_true",
+        default=False,
+    )
+
+    group1 = parser.add_mutually_exclusive_group()
+    group1.add_argument(
+        "-q",
+        help="Hide output regardless of the result",
+        action="store_true",
+        default=False,
+    )
+    group1.add_argument(
         "-v",
         help="Print output regardless of the result",
         action="store_true",
         default=False,
     )
+
     parser.add_argument(
         "-t",
         help="Set a timeout for each test in seconds (float)",
@@ -544,13 +566,13 @@ def main() -> int:
         default=10.0,
     )
 
-    group1 = parser.add_mutually_exclusive_group()
-    group1.add_argument(
+    group2 = parser.add_mutually_exclusive_group()
+    group2.add_argument(
         "-f",
         help="Filter test files by unix shell globbing pattern",
         metavar="glob",
     )
-    group1.add_argument(
+    group2.add_argument(
         "-e",
         help="Exclude test files by unix shell globbing pattern",
         metavar="glob",
@@ -571,27 +593,53 @@ def main() -> int:
 
     args = parser.parse_args()
     chapter = args.c
-    print_output = args.v
+    verbose = args.v
+    quiet = args.q
     timeout = args.t
+    list_only = args.l
+
+    match quiet, verbose:
+        case True, False:
+            output = Output.QUIET
+        case False, True:
+            output = Output.VERBOSE
+        case _:
+            output = Output.NORMAL
 
     filter = None
-    match (args.f, args.e):
-        case (None, None):
+    match args.f, args.e:
+        case None, None:
             pass
-        case (f, None):
+        case f, None:
             filter = Filter(re.compile(fnmatch.translate(f)), False)
-        case (None, e):
+        case None, e:
             filter = Filter(re.compile(fnmatch.translate(e)), True)
 
-    clear_screen()
+    # clear_screen()
     print_args(args)
+
+    # populate the test cases, this is required
+    populate_tests()
+
+    interpreters = (
+        list(Interpreter)
+        if args.interpreter == "all"
+        else [Interpreter[args.interpreter.upper()]]
+    )
+
+    for interp in interpreters:
+        print(f"Test suites available for '{interp.value.name.lower()}':")
+        tests = TESTS[interp.value.variant]
+        for test in tests:
+            print(f"\t- {test.chapter.name.lower()}")
+        print()
+
+    if list_only:
+        return 0
 
     # prepare the interpreters
     if not prepare_interpreters():
         return 2
-
-    # populate the test cases, this is required
-    populate_tests()
 
     def run(test: Test):
         if chapter is not None:
@@ -602,11 +650,11 @@ def main() -> int:
     result = Result()
     if args.interpreter == "all":
         for interpreter in Interpreter:
-            test = Test(interpreter, filter, print_output, timeout)
+            test = Test(interpreter, filter, output, timeout)
             result += run(test)
     else:
         interpreter = Interpreter[args.interpreter.upper()]
-        test = Test(interpreter, filter, print_output, timeout)
+        test = Test(interpreter, filter, output, timeout)
         result = run(test)
 
     printfl("\n>>> Summary")
