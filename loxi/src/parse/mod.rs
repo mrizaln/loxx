@@ -514,7 +514,7 @@ impl Parser<'_> {
                         }
 
                         // TODO: use better error message
-                        RefExpr::This { .. } => {
+                        RefExpr::This => {
                             Err(SyntaxError::expect("<lvalue>", "<this keyword>", loc))?
                         }
                         RefExpr::Super { .. } => {

@@ -134,9 +134,7 @@ pub fn run(interpreter: &mut Interpreter, program: &str, mode: Mode) -> Result<(
         eprint_context(&lines, err.loc());
         eprintln_red!("{}", err);
         LoxError::RuntimeError
-    })?;
-
-    Ok(())
+    })
 }
 
 pub fn run_file(path: PathBuf, mode: Mode) -> Result<(), LoxError> {
@@ -179,7 +177,7 @@ pub fn run_prompt() -> io::Result<()> {
         }
 
         if let Err(err) = run(&mut interpreter, &line, Mode::Repl) {
-            println!("{}", err);
+            println!("{err}");
         }
 
         line.clear();

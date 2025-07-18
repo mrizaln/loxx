@@ -318,7 +318,7 @@ impl Display for DisplayedRefExpr<'_, '_, '_> {
                 let name = interner.resolve(prop.name);
                 write!(f, "(super {name})")
             }
-            RefExpr::This { .. } => write!(f, "(this)"),
+            RefExpr::This => write!(f, "(this)"),
         }
     }
 }

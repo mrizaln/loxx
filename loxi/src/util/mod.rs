@@ -11,6 +11,7 @@ pub struct TokLoc<T: LoxToken> {
 }
 
 // TODO: add other information like filename
+// TODO: maybe reduce the size of each field to u32
 #[derive(Copy, Clone, Default, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct Loc {
     pub line: usize,

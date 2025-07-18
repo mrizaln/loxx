@@ -29,10 +29,10 @@ fn main() -> ExitCode {
             let path = PathBuf::from(source);
 
             if !path.exists() {
-                eprintln!("File not found: {:?}", path);
+                eprintln!("File not found: {path:?}");
                 return ExitCode::FAILURE;
             } else if !path.is_file() {
-                eprintln!("Not a file: {:?}", path);
+                eprintln!("Not a file: {path:?}");
                 return ExitCode::FAILURE;
             }
 
@@ -57,7 +57,7 @@ fn main() -> ExitCode {
         }
         None => {
             if let Err(err) = run_prompt() {
-                eprintln!("{}", err);
+                eprintln!("{err}");
                 return ExitCode::FAILURE;
             }
             ExitCode::SUCCESS
