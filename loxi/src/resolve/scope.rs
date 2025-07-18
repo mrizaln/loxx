@@ -184,8 +184,12 @@ impl Scope {
         })
     }
 
-    pub fn globals(&self) -> Vec<Key> {
-        self.globals.borrow().iter().map(|(k, _)| *k).collect()
+    pub fn globals(&self) -> Vec<(Key, Loc)> {
+        self.globals
+            .borrow()
+            .iter()
+            .map(|(k, b)| (*k, b.loc()))
+            .collect()
     }
 
     pub fn in_fun_scope(&self) -> Option<Fun> {

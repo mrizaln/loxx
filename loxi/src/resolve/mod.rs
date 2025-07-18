@@ -61,6 +61,7 @@ pub struct ResolveMap {
     resolved_expr: VecMap<usize>,
     captures_map: FxHashMap<StmtFunctionId, Captures>,
     hoists_map: FxHashMap<StmtId, Hoists>,
+    globals: Vec<(Key, Loc)>,
 }
 
 impl Resolver<'_, '_> {
@@ -104,10 +105,12 @@ impl Resolver<'_, '_> {
             }
         }
 
+        let globals = self.scope.globals();
+
         // check whether global references reference to valid defined variables
         let mut global_refs = mem::take(&mut self.global_refs);
-        for global in self.scope.globals() {
-            global_refs.remove_entry(&global);
+        for name in globals.iter().map(|v| v.0) {
+            global_refs.remove_entry(&name);
         }
 
         if !global_refs.is_empty() {
@@ -135,6 +138,7 @@ impl Resolver<'_, '_> {
             resolved_expr,
             captures_map: mem::take(&mut self.captures_map),
             hoists_map: mem::take(&mut self.hoists_map),
+            globals,
         })
     }
 
@@ -431,13 +435,17 @@ impl ResolveMap {
     pub fn get_hoists(&self, stmt_id: StmtId) -> Option<&Hoists> {
         self.hoists_map.get(&stmt_id)
     }
+
+    pub fn globals(&self) -> &[(Key, Loc)] {
+        &self.globals
+    }
 }
 
 impl Display for ResolveMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Resolved expressions {}:", self.resolved_expr.len())?;
         for (expr_id, distance) in self.resolved_expr.iter() {
-            writeln!(f, "  {:?} -> {}", expr_id, distance)?;
+            writeln!(f, "  {expr_id:?} -> {distance}")?;
         }
         Ok(())
     }
