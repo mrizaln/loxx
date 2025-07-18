@@ -11,6 +11,7 @@ use loxi::parse::Program;
 use loxi::resolve::scope::Hoists;
 use loxi::resolve::ResolveMap;
 use loxi::util::Loc;
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::bytecode::{
@@ -22,6 +23,7 @@ pub struct Compiler<'a> {
     bytecode: Bytecode,
     resolve_map: ResolveMap,
     debug_info: Metadata,
+    globals: FxHashMap<Key, Offset>,
     locals: Vec<(Key, VarId)>,
     scopes: Vec<u32>,
     current_hoists: Option<Hoists>,
@@ -36,12 +38,19 @@ pub enum CompileError {
     Error(Loc),
 }
 
+enum VarKind {
+    Local,
+    Global,
+    Upvalue,
+}
+
 impl<'a> Compiler<'a> {
     pub fn new(resolve_map: ResolveMap, ast: &'a Ast, interner: &'a Interner) -> Self {
         Self {
             bytecode: Bytecode::new(),
             resolve_map,
             debug_info: Metadata::default(),
+            globals: FxHashMap::default(),
             locals: Vec::default(),
             scopes: Vec::default(),
             current_hoists: None,
@@ -52,6 +61,13 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile(&mut self, program: &Program) -> Result<Bytecode, CompileError> {
+        let globals = self.resolve_map.globals().to_owned();
+        for (i, (name, _)) in globals.iter().enumerate() {
+            self.globals.insert(*name, Offset(i as u32 + 1));
+            self.bytecode.emit_constant(ConstKind::Nil);
+            self.incr_depth(1);
+        }
+
         for stmt in program.statements.iter() {
             self.compile_stmt(stmt)?
         }
@@ -87,11 +103,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_expr(&mut self, expr: &ExprId) -> Result<(), CompileError> {
-        let ExprL { expr, loc } = self.ast.get_expr(expr);
+    fn compile_expr(&mut self, id: &ExprId) -> Result<(), CompileError> {
+        let ExprL { expr, loc } = self.ast.get_expr(id);
         match expr {
             Expr::ValExpr(val_expr) => self.compile_val_expr(val_expr, loc),
-            Expr::RefExpr(ref_expr) => self.compile_ref_expr(ref_expr),
+            Expr::RefExpr(ref_expr) => self.compile_ref_expr(id, ref_expr),
         }
     }
 
@@ -177,15 +193,20 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn compile_ref_expr(&mut self, expr: &RefExpr) -> Result<(), CompileError> {
+    fn compile_ref_expr(&mut self, id: &ExprId, expr: &RefExpr) -> Result<(), CompileError> {
         match expr {
             RefExpr::Variable { var } => {
-                let offset = self.get_local(&var.name).unwrap();
-                self.bytecode.emit_load(LoadOp::Local(offset));
+                let (off, kind) = self.get_variable(id, &var.name).unwrap();
+                let op = match kind {
+                    VarKind::Local => LoadOp::Local(off),
+                    VarKind::Global => LoadOp::Global(off),
+                    VarKind::Upvalue => LoadOp::Upvalue(off),
+                };
+                self.bytecode.emit_load(op);
                 self.incr_depth(1);
             }
             RefExpr::Grouping { expr } => self.compile_expr(expr)?,
-            RefExpr::Assignment { var, value } => self.compile_assignment(&var.name, value)?,
+            RefExpr::Assignment { var, value } => self.compile_assignment(&var.name, id, value)?,
             RefExpr::Get { object, prop } => todo!(),
             RefExpr::Set {
                 object,
@@ -198,10 +219,20 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn compile_assignment(&mut self, name: &Key, value: &ExprId) -> Result<(), CompileError> {
+    fn compile_assignment(
+        &mut self,
+        name: &Key,
+        id: &ExprId,
+        value: &ExprId,
+    ) -> Result<(), CompileError> {
         self.compile_expr(value)?;
-        let offset = self.get_local(name).unwrap();
-        self.bytecode.emit_store(StoreOp::Local(offset));
+        let (off, kind) = self.get_variable(id, name).unwrap();
+        let op = match kind {
+            VarKind::Local => StoreOp::Local(off),
+            VarKind::Global => StoreOp::Global(off),
+            VarKind::Upvalue => StoreOp::Upvalue(off),
+        };
+        self.bytecode.emit_store(op);
         Ok(())
     }
 
@@ -225,15 +256,24 @@ impl<'a> Compiler<'a> {
                 self.incr_depth(1);
             }
         }
-        let offset = self.current_depth();
-        let id = self.debug_info.push_var(
-            loc,
-            self.interner.resolve(*name),
-            offset,
-            self.bytecode.current_address(),
-            0,
-        );
-        self.locals.push((*name, id));
+
+        if self.scopes.is_empty() {
+            let offset = self.get_global(name).unwrap();
+            self.bytecode.emit_store(StoreOp::Global(offset));
+            self.bytecode.emit_pop(1);
+            self.decr_depth(1);
+        } else {
+            let offset = self.current_depth();
+            let id = self.debug_info.push_var(
+                loc,
+                self.interner.resolve(*name),
+                offset,
+                self.bytecode.current_address(),
+                0,
+            );
+            self.locals.push((*name, id));
+        }
+
         Ok(())
     }
 
@@ -329,6 +369,17 @@ impl<'a> Compiler<'a> {
             self.bytecode.emit_pop(delta);
             self.locals.truncate(self.locals.len() - delta as usize);
         }
+    }
+
+    fn get_variable(&self, id: &ExprId, key: &Key) -> Option<(Offset, VarKind)> {
+        match self.resolve_map.distance(*id) {
+            None => self.get_global(key).map(|v| (v, VarKind::Global)),
+            Some(_) => self.get_local(key).map(|v| (v, VarKind::Local)), // TODO: check upvalue
+        }
+    }
+
+    fn get_global(&self, key: &Key) -> Option<Offset> {
+        self.globals.get(key).cloned()
     }
 
     fn get_local(&self, key: &Key) -> Option<Offset> {

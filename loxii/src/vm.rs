@@ -60,7 +60,7 @@ impl Vm {
                 Op::Binary(bin_op) => self.interpret_binary(bin_op)?,
                 Op::Print => self.interpret_print()?,
             };
-            // println!("{:>2} -> {:>2} | {op_str}", before, self.stack.len());
+            // eprintln!("{:>2} -> {:>2} | {op_str}", before, self.stack.len());
         }
 
         Ok(())
@@ -68,8 +68,8 @@ impl Vm {
 
     fn interpret_load(&mut self, op: LoadOp) -> Result<(), RuntimeError> {
         match op {
-            LoadOp::Local(off) => self.stack.dup(off.0 as usize + self.stack_offset - 1)?,
-            LoadOp::Global(off) => todo!(),
+            LoadOp::Local(off) => self.stack.dup(self.abs_offset(&off))?,
+            LoadOp::Global(off) => self.stack.dup(off.0 as usize - 1)?,
             LoadOp::Upvalue(off) => todo!(),
         };
         Ok(())
@@ -82,7 +82,11 @@ impl Vm {
                 let value = self.stack.peek_mut(self.abs_offset(&off))?;
                 *value = new_value;
             }
-            StoreOp::Global(off) => todo!(),
+            StoreOp::Global(off) => {
+                let new_value = self.stack.top()?.clone();
+                let value = self.stack.peek_mut(off.0 as usize - 1)?;
+                *value = new_value;
+            }
             StoreOp::Upvalue(off) => todo!(),
         }
         Ok(())

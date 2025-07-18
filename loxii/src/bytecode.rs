@@ -134,6 +134,7 @@ pub struct Bytecode {
     constant: Vec<u8>,
     constant_map: FxHashMap<Key, Address>,
     global: Vec<u8>,
+    global_map: FxHashMap<Key, Offset>,
     code: Vec<u8>,
 }
 
@@ -214,10 +215,23 @@ impl Bytecode {
         Self::default()
     }
 
+    /// If the same global with the same name is passed in, it won't create new entry
+    pub fn create_global(&mut self, key: Key, interner: &Interner) -> Offset {
+        if let Some(off) = self.global_map.get(&key) {
+            return *off;
+        }
+
+        let addr = self.create_constant_string(key, interner);
+        let index = self.global.len();
+        self.global.extend(addr.0.to_be_bytes());
+
+        Offset(index as u32)
+    }
+
     pub fn create_constant_string(&mut self, key: Key, interner: &Interner) -> Address {
         if let Some(addr) = self.constant_map.get(&key) {
             return *addr;
-        };
+        }
 
         let str = interner.resolve(key);
         let addr = self.constant.len();
@@ -458,11 +472,11 @@ impl<'a> Iterator for BytecodeReader<'a> {
             }
             OpValue::StoreGlobal => {
                 let offset = self.advance().into();
-                Ok(Op::Store(StoreOp::Local(offset)))
+                Ok(Op::Store(StoreOp::Global(offset)))
             }
             OpValue::StoreUpvalue => {
                 let offset = self.advance().into();
-                Ok(Op::Store(StoreOp::Local(offset)))
+                Ok(Op::Store(StoreOp::Upvalue(offset)))
             }
             OpValue::Const => {
                 let byte = self.advance_one();
