@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use loxi::Mode;
+use loxi::{LoxError, Mode};
 use loxii::run_file;
 
 #[derive(Parser, Debug)]
@@ -21,7 +21,7 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    coredump::register_panic_handler().unwrap();
+    // coredump::register_panic_handler().unwrap();
 
     let args = Args::parse();
 
@@ -30,10 +30,10 @@ fn main() -> ExitCode {
             let path = PathBuf::from(source);
 
             if !path.exists() {
-                eprintln!("File not found: {:?}", path);
+                eprintln!("File not found: {path:?}");
                 return ExitCode::FAILURE;
             } else if !path.is_file() {
-                eprintln!("Not a file: {:?}", path);
+                eprintln!("Not a file: {path:?}");
                 return ExitCode::FAILURE;
             }
 
@@ -46,7 +46,14 @@ fn main() -> ExitCode {
             match run_file(path, mode) {
                 Err(err) => {
                     eprintln!("{err}");
-                    ExitCode::FAILURE
+                    match err {
+                        LoxError::EmptyError => ExitCode::SUCCESS,
+                        LoxError::IoError(_) => ExitCode::FAILURE,
+                        LoxError::LexError(_) => ExitCode::from(65),
+                        LoxError::ParseError => ExitCode::from(65),
+                        LoxError::ResolveError => ExitCode::from(65),
+                        LoxError::RuntimeError => ExitCode::from(70),
+                    }
                 }
                 Ok(_) => ExitCode::SUCCESS,
             }

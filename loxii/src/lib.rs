@@ -84,18 +84,16 @@ pub fn run(program: &str, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
         return Ok(());
     };
 
-    // dump
+    // dump (for debugging purpose only)
     let display = bytecode.display();
-    println!("bytecode:\n{}", display);
+    eprintln!("bytecode:\n{display}");
 
     // interpret
-    // TODO: implement
     let mut vm = Vm::new();
-    if let Err(err) = vm.interpret(&bytecode) {
+    vm.interpret(&bytecode).map_err(|err| {
         loxi::eprintln_red!("{}", err);
-    }
-
-    Ok(())
+        loxi::LoxError::RuntimeError
+    })
 }
 
 pub fn run_file(path: PathBuf, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
