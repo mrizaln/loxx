@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use thiserror::Error;
 
 use crate::value::{Instance, Value};
@@ -113,12 +115,20 @@ impl Heap {
         two: HeapId,
     ) -> Option<(&mut HeapValue, &mut HeapValue)> {
         // inspired by: https://stackoverflow.com/a/74296885
+
+        if one.page == two.page {
+            let page = self.pages.get_mut(one.page)?;
+            return page.get_two_mut(one.index, two.index);
+        };
+
         let (start, end) = match one.page < two.page {
             true => (one.page, two.page),
             false => (two.page, one.page),
         };
+
         let (left, right) = self.pages.split_at_mut(start + 1);
         let (page_one, page_two) = (&mut left[start], &mut right[end - start - 1]);
+
         Some((
             &mut page_one.get_mut(one.index)?.value,
             &mut page_two.get_mut(two.index)?.value,
@@ -230,8 +240,12 @@ impl<const N: usize> Page<N> {
         });
         self.count += 1;
 
-        let first = self.mem[i..N].iter().position(|v| v.is_none());
-        self.first_empty = first.unwrap_or(N);
+        while self.mem[self.first_empty].is_some() {
+            self.first_empty += 1;
+            if self.first_empty >= self.mem.len() {
+                break;
+            }
+        }
 
         i
     }
@@ -252,15 +266,29 @@ impl<const N: usize> Page<N> {
         self.mem[index].as_mut()
     }
 
+    fn get_two_mut(&mut self, one: usize, two: usize) -> Option<(&mut HeapValue, &mut HeapValue)> {
+        if one == two {
+            return None;
+        }
+
+        let (start, end) = match one < two {
+            true => (one, two),
+            false => (two, one),
+        };
+
+        let (left, right) = self.mem.split_at_mut(start + 1);
+        let (one, two) = (&mut left[start], &mut right[end - start - 1]);
+
+        Some((&mut one.as_mut()?.value, &mut two.as_mut()?.value))
+    }
+
     fn replace(&mut self, index: usize, value: HeapValue) -> Option<HeapValue> {
-        std::mem::replace(
-            &mut self.mem[index],
-            Some(PageValue {
+        self.mem[index]
+            .replace(PageValue {
                 value,
                 mark: Mark::Dead,
-            }),
-        )
-        .map(|v| v.value)
+            })
+            .map(|v| v.value)
     }
 }
 
