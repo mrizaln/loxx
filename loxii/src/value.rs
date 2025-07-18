@@ -3,7 +3,7 @@ use std::fmt::Display;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
-use crate::memory::{Heap, HeapId};
+use crate::memory::{Heap, HeapId, HeapValue};
 use crate::metadata::{ClassId, FuncId};
 
 #[derive(Debug, Clone)]
@@ -87,11 +87,11 @@ impl Value {
         match (self, other) {
             (Value::Number(num1), Value::Number(num2)) => Ok(Value::Number(num1 + num2)),
             (Value::String(str1), Value::String(str2)) => {
-                let (strr1, strr2) = heap.get_two_mut(str1, str2).unwrap();
-                let strr1 = strr1.as_string_mut();
-                let strr2 = strr2.as_string();
-                strr1.push_str(strr2);
-                Ok(Value::String(str1))
+                let (str1, str2) = heap.get_two(str1, str2).unwrap();
+                let mut str1 = str1.as_string().clone();
+                let str2 = str2.as_string().as_str();
+                str1.push_str(str2);
+                Ok(Value::String(heap.construct(HeapValue::String(str1))))
             }
             (lhs, rhs) => Err(ValueError::Binary("+", lhs.name(), rhs.name())),
         }
