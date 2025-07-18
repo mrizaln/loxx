@@ -25,6 +25,9 @@ class Command:
 class Interpreter(Enum):
     LOXI = Command(["./target/release/loxi"])
     # LOXII = Command(["./target/release/loxii"])
+    JLOX = Command(["./reference/crafting-interpreters-code/jlox"])
+    CLOX = Command(["./reference/crafting-interpreters-code/clox"])
+    RLOX = Command(["./reference/rlox-interpreter/target/release/rlox-interpreter"])
 
 
 class Result:
@@ -88,6 +91,10 @@ def benchmark_file(interpreter: Interpreter, file: PurePath) -> float | None:
         proc = run(args, capture_output=True, text=True, check=True)
     except KeyboardInterrupt:
         return None
+    except CalledProcessError as e:
+        printfl(f"non zero exit code: {e.returncode}")
+        pprint(e.stdout, e.stderr)
+        return None
 
     stdout = proc.stdout
     stderr = proc.stderr
@@ -109,6 +116,9 @@ def benchmark_file(interpreter: Interpreter, file: PurePath) -> float | None:
 
 
 def run_benchmark(interpreter: Interpreter, repeat: int) -> Result:
+    if repeat <= 0:
+        return Result()
+
     printfl(f"\n{Cs.y('>>> Benchmarking')} {interpreter.name.lower()}")
     files = benchmarks_file_generator()
 
@@ -204,15 +214,27 @@ def main() -> int:
         nargs="?",
     )
 
+    parser.add_argument(
+        "--warm-up",
+        help="Do warm-up before benchmarking",
+        action="store_true",
+    )
+
     if len(sys.argv) == 1:
         parser.print_help(sys.stderr)
         return 1
 
     args = parser.parse_args()
 
-    clear_screen()
+    # clear_screen()
     print_args(args)
     prepare_interpreters()
+
+    # warm-up
+    if args.warm_up:
+        printfl(f"\n{Cs.y('>-- Warm-up start')} ")
+        _ = run_benchmark(Interpreter.JLOX, 1)
+        printfl(f"\n{Cs.y('>-- Warm-up end')} ")
 
     def interpreters():
         if args.interpreter == "all":
