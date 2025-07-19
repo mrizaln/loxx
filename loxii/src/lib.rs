@@ -10,7 +10,6 @@ use self::vm::Vm;
 mod bytecode;
 mod compiler;
 mod memory;
-mod metadata;
 mod util;
 mod value;
 mod vm;
@@ -78,7 +77,7 @@ pub fn run(program: &str, mode: loxi::Mode) -> Result<(), loxi::LoxError> {
     })?;
 
     // compile
-    let mut compiler = Compiler::new(resolve_map, &ast, &interner);
+    let compiler = Compiler::new(resolve_map, &ast, &interner);
     let Ok(bytecode) = compiler.compile(&program) else {
         loxi::eprintln_red!("{}", "failed to compile");
         return Ok(());

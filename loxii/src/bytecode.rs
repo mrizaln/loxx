@@ -4,32 +4,39 @@ use std::mem::transmute;
 use std::str::Utf8Error;
 
 use loxi::interner::{Interner, Key};
+use loxi::util::Loc;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::value::Constant;
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct Address(pub u32);
+pub struct ConstAddr(pub u32);
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct Offset(pub u32);
+pub struct InstrAddr(pub u32);
 
 #[derive(Copy, Clone, Default, Debug)]
-pub struct Patch(pub u32);
+pub struct InstrOff(pub i32);
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct StackIdx(pub u32);
+
+#[derive(Copy, Clone, Default, Debug)]
+pub struct Patch(u32);
 
 #[derive(Debug)]
 pub enum LoadOp {
-    Local(Offset),
-    Global(Offset),
-    Upvalue(Offset),
+    Local(StackIdx),
+    Global(StackIdx),
+    Upvalue(StackIdx),
 }
 
 #[derive(Debug)]
 pub enum StoreOp {
-    Local(Offset),
-    Global(Offset),
-    Upvalue(Offset),
+    Local(StackIdx),
+    Global(StackIdx),
+    Upvalue(StackIdx),
 }
 
 #[derive(Debug)]
@@ -54,9 +61,9 @@ pub enum UnaryOp {
 
 #[derive(Debug)]
 pub enum JumpOp {
-    Unconditional(Address),
-    OnFalse(Address),
-    OnTrue(Address),
+    Unconditional(InstrOff),
+    OnFalse(InstrOff),
+    OnTrue(InstrOff),
 }
 
 #[derive(Debug)]
@@ -75,8 +82,19 @@ pub enum Op<'a> {
 pub enum ConstKind {
     Nil,
     Bool(bool),
-    Number(Address),
-    String(Address),
+    Number(ConstAddr),
+    String(ConstAddr),
+}
+
+pub enum JumpKind {
+    Unconditional,
+    OnFalse,
+    OnTrue,
+}
+
+pub enum JumpDest {
+    Current,
+    Addr(InstrAddr),
 }
 
 #[derive(Debug, Error)]
@@ -129,19 +147,32 @@ enum OpValue {
     Print,
 }
 
-#[derive(Default)]
+pub struct Chunk {
+    id: u32,
+    name: ConstAddr,
+    loc: Loc,
+    code: Vec<u8>,
+    reloc: Vec<u32>,
+}
+
 pub struct Bytecode {
     constant: Vec<u8>,
-    constant_map: FxHashMap<Key, Address>,
-    global: Vec<u8>,
-    global_map: FxHashMap<Key, Offset>,
     code: Vec<u8>,
+}
+
+#[derive(Default)]
+pub struct BytecodeBuilder {
+    constant: Vec<u8>,
+    constant_map: FxHashMap<Key, ConstAddr>,
+    chunks_map: Vec<(Loc, Option<InstrAddr>)>, // finished chunks
+    chunks_active: Vec<Chunk>,                 // pending and currently processed chunks
+    chunk: Vec<u8>,                            // combined chunk
+    reloc: Vec<u32>,                           // combined relocations
 }
 
 #[derive(Clone)]
 pub struct BytecodeReader<'a> {
     constant: &'a [u8],
-    global: &'a [u8],
     code: &'a [u8],
     index: usize,
 }
@@ -184,51 +215,113 @@ impl TryFrom<u8> for ConstKindValue {
     }
 }
 
-impl Address {
+impl ConstAddr {
     pub fn to_be_bytes(self) -> [u8; size_of::<u32>()] {
         self.0.to_be_bytes()
     }
 }
 
-impl From<[u8; size_of::<u32>()]> for Address {
+impl InstrAddr {
+    pub fn to_be_bytes(self) -> [u8; size_of::<u32>()] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl InstrOff {
+    pub fn to_be_bytes(self) -> [u8; size_of::<i32>()] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl StackIdx {
+    pub fn to_be_bytes(self) -> [u8; size_of::<u32>()] {
+        self.0.to_be_bytes()
+    }
+}
+
+impl From<[u8; size_of::<u32>()]> for ConstAddr {
     fn from(value: [u8; size_of::<u32>()]) -> Self {
         let num = u32::from_be_bytes(value);
         Self(num)
     }
 }
 
-impl Offset {
-    pub fn to_be_bytes(self) -> [u8; size_of::<u32>()] {
-        self.0.to_be_bytes()
-    }
-}
-
-impl From<[u8; size_of::<u32>()]> for Offset {
+impl From<[u8; size_of::<u32>()]> for InstrAddr {
     fn from(value: [u8; size_of::<u32>()]) -> Self {
         let num = u32::from_be_bytes(value);
         Self(num)
+    }
+}
+
+impl From<[u8; size_of::<i32>()]> for InstrOff {
+    fn from(value: [u8; size_of::<i32>()]) -> Self {
+        let num = i32::from_be_bytes(value);
+        Self(num)
+    }
+}
+
+impl From<[u8; size_of::<u32>()]> for StackIdx {
+    fn from(value: [u8; size_of::<u32>()]) -> Self {
+        let num = u32::from_be_bytes(value);
+        Self(num)
+    }
+}
+
+impl Chunk {
+    fn new(id: u32, name: ConstAddr, loc: Loc) -> Self {
+        Self {
+            id,
+            name,
+            loc,
+            code: Vec::new(),
+            reloc: Vec::new(),
+        }
     }
 }
 
 impl Bytecode {
+    pub fn display(&self) -> DisplayedBytecode {
+        DisplayedBytecode {
+            reader: self.into_iter(),
+        }
+    }
+}
+
+impl BytecodeBuilder {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// If the same global with the same name is passed in, it won't create new entry
-    pub fn create_global(&mut self, key: Key, interner: &Interner) -> Offset {
-        if let Some(off) = self.global_map.get(&key) {
-            return *off;
+    pub fn finish(mut self) -> Bytecode {
+        for loc in self.reloc.iter().map(|v| *v as usize) {
+            let slice = &mut self.chunk[loc..loc + 4];
+            let index = u32::from_be_bytes(slice.try_into().unwrap());
+            let addr = self.chunks_map[index as usize].1.unwrap();
+            slice.copy_from_slice(&addr.to_be_bytes());
         }
 
-        let addr = self.create_constant_string(key, interner);
-        let index = self.global.len();
-        self.global.extend(addr.0.to_be_bytes());
-
-        Offset(index as u32)
+        Bytecode {
+            constant: self.constant,
+            code: self.chunk,
+        }
     }
 
-    pub fn create_constant_string(&mut self, key: Key, interner: &Interner) -> Address {
+    pub fn start_chunk(&mut self, name: ConstAddr, loc: Loc) {
+        let chunk = Chunk::new(self.chunks_map.len() as u32, name, loc);
+        self.chunks_active.push(chunk);
+        self.chunks_map.push((loc, None));
+    }
+
+    pub fn end_chunk(&mut self) {
+        let chunk = self.chunks_active.pop().unwrap();
+        let offset = self.chunk.len();
+        for loc in chunk.reloc {
+            self.reloc.push(offset as u32 + loc);
+        }
+        self.chunk.extend(&chunk.code);
+    }
+
+    pub fn create_constant_string(&mut self, key: Key, interner: &Interner) -> ConstAddr {
         if let Some(addr) = self.constant_map.get(&key) {
             return *addr;
         }
@@ -238,106 +331,113 @@ impl Bytecode {
         self.constant.extend(str.as_bytes());
         self.constant.push(b'\0');
 
-        Address(addr as u32)
+        ConstAddr(addr as u32)
     }
 
-    pub fn create_consant_num(&mut self, num: f64) -> Address {
+    pub fn create_consant_num(&mut self, num: f64) -> ConstAddr {
         let addr = self.constant.len();
         self.constant.extend(num.to_be_bytes());
-        Address(addr as u32)
+        ConstAddr(addr as u32)
     }
 
-    pub fn emit_pop(&mut self, amount: u32) -> Address {
-        let index = self.code.len();
-        self.code.push(OpValue::Pop as u8);
-        self.code.extend(amount.to_be_bytes());
-        Address(index as u32)
+    pub fn emit_pop(&mut self, amount: u32) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
+        code.push(OpValue::Pop as u8);
+        code.extend(amount.to_be_bytes());
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_upvalue(&mut self) -> Address {
-        let index = self.code.len();
-        self.code.push(OpValue::Upvalue as u8);
-        Address(index as u32)
+    pub fn emit_upvalue(&mut self) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
+        code.push(OpValue::Upvalue as u8);
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_load(&mut self, op: LoadOp) -> Address {
-        let index = self.code.len();
+    pub fn emit_load(&mut self, op: LoadOp) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
         let (op, off) = match op {
             LoadOp::Local(offset) => (OpValue::LoadLocal, offset),
             LoadOp::Global(offset) => (OpValue::LoadGlobal, offset),
             LoadOp::Upvalue(offset) => (OpValue::LoadUpvalue, offset),
         };
-        self.code.push(op as u8);
-        self.code.extend(off.to_be_bytes());
-        Address(index as u32)
+        code.push(op as u8);
+        code.extend(off.to_be_bytes());
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_store(&mut self, op: StoreOp) -> Address {
-        let index = self.code.len();
+    pub fn emit_store(&mut self, op: StoreOp) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
         let (op, off) = match op {
             StoreOp::Local(offset) => (OpValue::StoreLocal, offset),
             StoreOp::Global(offset) => (OpValue::StoreGlobal, offset),
             StoreOp::Upvalue(offset) => (OpValue::StoreUpvalue, offset),
         };
-        self.code.push(op as u8);
-        self.code.extend(off.to_be_bytes());
-        Address(index as u32)
+        code.push(op as u8);
+        code.extend(off.to_be_bytes());
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_print(&mut self) -> Address {
-        let index = self.code.len();
-        self.code.push(OpValue::Print as u8);
-        Address(index as u32)
+    pub fn emit_print(&mut self) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
+        code.push(OpValue::Print as u8);
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_constant(&mut self, kind: ConstKind) -> Address {
-        let index = self.code.len();
-        self.code.push(OpValue::Const as u8);
+    pub fn emit_constant(&mut self, kind: ConstKind) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
+        code.push(OpValue::Const as u8);
         match kind {
-            ConstKind::Nil => self.code.push((ConstKindValue::Nil as u8) << 6),
+            ConstKind::Nil => code.push((ConstKindValue::Nil as u8) << 6),
             ConstKind::Bool(b) => {
                 let byte = (ConstKindValue::Bool as u8) << 6;
-                self.code.push(byte | if b { 1 } else { 0 });
+                code.push(byte | if b { 1 } else { 0 });
             }
             ConstKind::Number(address) => {
-                self.code.push((ConstKindValue::Number as u8) << 6);
-                self.code.extend(address.0.to_be_bytes());
+                code.push((ConstKindValue::Number as u8) << 6);
+                code.extend(address.0.to_be_bytes());
             }
             ConstKind::String(address) => {
-                self.code.push((ConstKindValue::String as u8) << 6);
-                self.code.extend(address.0.to_be_bytes());
+                code.push((ConstKindValue::String as u8) << 6);
+                code.extend(address.0.to_be_bytes());
             }
         }
-        Address(index as u32)
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_jump(&mut self, jump: JumpOp) -> (Address, Patch) {
-        let start = self.code.len();
-        let (kind, addr) = match jump {
-            JumpOp::Unconditional(addr) => (OpValue::Jump, addr.0),
-            JumpOp::OnFalse(addr) => (OpValue::JumpIfFalse, addr.0),
-            JumpOp::OnTrue(addr) => (OpValue::JumpIfTrue, addr.0),
+    pub fn emit_jump(&mut self, jump: JumpKind) -> (InstrAddr, Patch) {
+        let code = &mut self.current_mut().code;
+        let start = code.len();
+        let kind = match jump {
+            JumpKind::Unconditional => OpValue::Jump,
+            JumpKind::OnFalse => OpValue::JumpIfFalse,
+            JumpKind::OnTrue => OpValue::JumpIfTrue,
         };
-        self.code.push(kind as u8);
+        code.push(kind as u8);
+        code.extend(u32::MAX.to_be_bytes());
 
-        let index = self.code.len();
-        self.code.extend(addr.to_be_bytes());
-
-        (Address(start as u32), Patch(index as u32))
+        (InstrAddr(start as u32), Patch(start as u32))
     }
 
-    pub fn emit_unary(&mut self, unary_op: UnaryOp) -> Address {
-        let index = self.code.len();
+    pub fn emit_unary(&mut self, unary_op: UnaryOp) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
         let kind = match unary_op {
             UnaryOp::Not => OpValue::Not,
             UnaryOp::Negate => OpValue::Negate,
         };
-        self.code.push(kind as u8);
-        Address(index as u32)
+        code.push(kind as u8);
+        InstrAddr(index as u32)
     }
 
-    pub fn emit_binary(&mut self, bin_op: BinOp) -> Address {
-        let index = self.code.len();
+    pub fn emit_binary(&mut self, bin_op: BinOp) -> InstrAddr {
+        let code = &mut self.current_mut().code;
+        let index = code.len();
         let op = match bin_op {
             BinOp::Add => OpValue::Add,
             BinOp::Sub => OpValue::Sub,
@@ -350,38 +450,70 @@ impl Bytecode {
             BinOp::Greater => OpValue::Greater,
             BinOp::GreaterEq => OpValue::GreaterEq,
         };
-        self.code.push(op as u8);
-        Address(index as u32)
+        code.push(op as u8);
+        InstrAddr(index as u32)
     }
 
-    pub fn patch_jump(&mut self, patch: Patch) {
-        let current = (self.code.len() as u32).to_be_bytes();
-        let index = patch.0 as usize;
-        let slice = &mut self.code[index..index + 4];
-        slice.copy_from_slice(&current);
+    pub fn emit_call(&mut self, loc: Loc) -> Option<InstrAddr> {
+        let pos = self.chunks_map.iter().position(|v| v.0 == loc)?;
+        let addr = self.chunks_map[pos].1;
+        let chunk = self.current_mut();
+
+        let index = chunk.code.len();
+        match addr {
+            Some(addr) => chunk.code.extend(addr.to_be_bytes()),
+            None => {
+                chunk.reloc.push(index as u32);
+                chunk.code.extend(pos.to_be_bytes());
+            }
+        };
+
+        Some(InstrAddr(index as u32))
     }
 
-    pub fn display(&self) -> DisplayedBytecode {
-        DisplayedBytecode {
-            reader: self.into_iter(),
-        }
+    pub fn patch_jump(&mut self, patch: Patch, dest: JumpDest) {
+        let code = &mut self.current_mut().code;
+        let idx = patch.0 as usize;
+        let offset = 1 + size_of::<u32>();
+        let new = match dest {
+            JumpDest::Current => code.len() as i32 - idx as i32 - offset as i32,
+            JumpDest::Addr(addr) => addr.0 as i32 - idx as i32 - offset as i32,
+        };
+        let slice = &mut code[idx + 1..idx + offset];
+        slice.copy_from_slice(&new.to_be_bytes());
     }
 
-    pub fn current_address(&self) -> Address {
-        Address(self.code.len() as u32)
+    pub fn current_address(&self) -> InstrAddr {
+        InstrAddr(self.current().code.len() as u32)
+    }
+
+    fn current(&self) -> &Chunk {
+        self.chunks_active.last().unwrap()
+    }
+
+    fn current_mut(&mut self) -> &mut Chunk {
+        self.chunks_active.last_mut().unwrap()
+    }
+
+    fn is_global_chunk(&self) -> bool {
+        self.chunks_active.len() == 1
     }
 }
 
 impl<'a> BytecodeReader<'a> {
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
     pub fn reset(&mut self) {
         self.index = 0;
     }
 
-    pub fn jump(&mut self, address: Address) {
-        self.index = address.0 as usize;
+    pub fn jump(&mut self, offset: InstrOff) {
+        self.index = self.index.wrapping_add_signed(offset.0 as isize);
     }
 
-    pub fn read_constant_num(&self, addr: Address) -> f64 {
+    pub fn read_constant_num(&self, addr: InstrAddr) -> f64 {
         let index = addr.0 as usize;
         let slice = &self.constant[index..];
 
@@ -390,7 +522,7 @@ impl<'a> BytecodeReader<'a> {
         f64::from_be_bytes(num)
     }
 
-    pub fn read_constant_string(&self, addr: Address) -> Result<&'a str, BytecodeError> {
+    pub fn read_constant_string(&self, addr: InstrAddr) -> Result<&'a str, BytecodeError> {
         let index = addr.0 as usize;
         let slice = &self.constant[index..];
         let size = slice
@@ -427,7 +559,6 @@ impl<'a> IntoIterator for &'a Bytecode {
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
             constant: &self.constant,
-            global: &self.global,
             code: &self.code,
             index: 0,
         }
@@ -435,7 +566,7 @@ impl<'a> IntoIterator for &'a Bytecode {
 }
 
 impl<'a> Iterator for BytecodeReader<'a> {
-    type Item = (Address, Result<Op<'a>, BytecodeError>);
+    type Item = (InstrAddr, Result<Op<'a>, BytecodeError>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.code.len() {
@@ -524,7 +655,7 @@ impl<'a> Iterator for BytecodeReader<'a> {
             OpValue::Print => Ok(Op::Print),
         });
 
-        Some((Address(index as u32), op))
+        Some((InstrAddr(index as u32), op))
     }
 }
 

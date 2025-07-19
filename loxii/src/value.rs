@@ -4,7 +4,6 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::memory::{Heap, HeapId, HeapValue};
-use crate::metadata::{ClassId, FuncId};
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -12,9 +11,9 @@ pub enum Value {
     Bool(bool),
     Number(f64),
     String(HeapId),
-    Class(ClassId),
+    Class(HeapId),
     Instance(HeapId),
-    Function(FuncId, Option<HeapId>), // HeapId must be instance
+    Function(HeapId, Option<HeapId>), // HeapId must be instance
 }
 
 #[derive(Debug)]
@@ -28,7 +27,7 @@ pub enum Constant<'a> {
 #[derive(Debug)]
 pub struct Instance {
     id: usize,
-    class: ClassId,
+    class: HeapId,
     fields: FxHashMap<String, Value>,
 }
 

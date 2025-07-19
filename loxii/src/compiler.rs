@@ -1,11 +1,9 @@
 #![allow(dead_code)]
 
-use std::mem;
-
 use loxi::interner::{Interner, Key};
 use loxi::parse::ast::Ast;
 use loxi::parse::expr::{Expr, ExprId, ExprL, RefExpr, ValExpr};
-use loxi::parse::stmt::{Stmt, StmtFunctionId, StmtId, StmtL};
+use loxi::parse::stmt::{Stmt, StmtFunctionId, StmtFunctionL, StmtId, StmtL};
 use loxi::parse::token::{self, Literal};
 use loxi::parse::Program;
 use loxi::resolve::scope::Hoists;
@@ -15,16 +13,15 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::bytecode::{
-    Address, BinOp, Bytecode, ConstKind, JumpOp, LoadOp, Offset, StoreOp, UnaryOp,
+    BinOp, Bytecode, BytecodeBuilder, ConstKind, InstrAddr, JumpDest, JumpKind, JumpOp, LoadOp,
+    StackIdx, StoreOp, UnaryOp,
 };
-use crate::metadata::{Metadata, VarId};
 
 pub struct Compiler<'a> {
-    bytecode: Bytecode,
+    bytecode: BytecodeBuilder,
     resolve_map: ResolveMap,
-    debug_info: Metadata,
-    globals: FxHashMap<Key, Offset>,
-    locals: Vec<(Key, VarId)>,
+    globals: FxHashMap<Key, StackIdx>,
+    locals: Vec<(Key, StackIdx)>,
     scopes: Vec<u32>,
     current_hoists: Option<Hoists>,
     stack_depth: u32,
@@ -47,9 +44,8 @@ enum VarKind {
 impl<'a> Compiler<'a> {
     pub fn new(resolve_map: ResolveMap, ast: &'a Ast, interner: &'a Interner) -> Self {
         Self {
-            bytecode: Bytecode::new(),
+            bytecode: BytecodeBuilder::new(),
             resolve_map,
-            debug_info: Metadata::default(),
             globals: FxHashMap::default(),
             locals: Vec::default(),
             scopes: Vec::default(),
@@ -60,10 +56,14 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    pub fn compile(&mut self, program: &Program) -> Result<Bytecode, CompileError> {
+    pub fn compile(mut self, program: &Program) -> Result<Bytecode, CompileError> {
+        let global = self.interner.key_global;
+        let name = self.bytecode.create_constant_string(global, self.interner);
+        self.bytecode.start_chunk(name, Loc::default());
+
         let globals = self.resolve_map.globals().to_owned();
         for (i, (name, _)) in globals.iter().enumerate() {
-            self.globals.insert(*name, Offset(i as u32 + 1));
+            self.globals.insert(*name, StackIdx(i as u32 + 1));
             self.bytecode.emit_constant(ConstKind::Nil);
             self.incr_depth(1);
         }
@@ -71,7 +71,9 @@ impl<'a> Compiler<'a> {
         for stmt in program.statements.iter() {
             self.compile_stmt(stmt)?
         }
-        Ok(mem::take(&mut self.bytecode))
+
+        self.bytecode.end_chunk();
+        Ok(self.bytecode.finish())
     }
 
     fn compile_stmt(&mut self, id: &StmtId) -> Result<(), CompileError> {
@@ -90,7 +92,7 @@ impl<'a> Compiler<'a> {
                 otherwise,
             } => self.compile_if(condition, then, otherwise),
             Stmt::While { condition, body } => self.compile_while(condition, body),
-            Stmt::Function { func } => self.compile_function(func),
+            Stmt::Function { func } => self.compile_function(func, loc),
             Stmt::Return { value } => self.compile_return(value),
             Stmt::Class {
                 name,
@@ -135,8 +137,7 @@ impl<'a> Compiler<'a> {
                     token::UnaryOp::Minus => UnaryOp::Negate,
                     token::UnaryOp::Not => UnaryOp::Not,
                 };
-                let addr = self.bytecode.emit_unary(op);
-                self.debug_info.push_expr(loc, operator.into(), addr);
+                self.bytecode.emit_unary(op);
             }
             ValExpr::Binary {
                 left,
@@ -157,35 +158,30 @@ impl<'a> Compiler<'a> {
                     token::BinaryOp::Mul => BinOp::Mul,
                     token::BinaryOp::Div => BinOp::Div,
                 };
-                let addr = self.bytecode.emit_binary(op);
-                self.debug_info.push_expr(loc, operator.into(), addr);
+                self.bytecode.emit_binary(op);
                 self.decr_depth(1);
             }
             ValExpr::Grouping { expr } => self.compile_expr(expr)?,
             ValExpr::Logical { left, kind, right } => match kind {
                 token::LogicalOp::And => {
                     self.compile_expr(left)?;
-                    let op = JumpOp::OnFalse(Address::default());
-                    let (addr, patch) = self.bytecode.emit_jump(op);
-                    self.debug_info.push_expr(loc, kind.into(), addr);
+                    let (_, patch) = self.bytecode.emit_jump(JumpKind::OnFalse);
 
                     self.bytecode.emit_pop(1);
                     self.decr_depth(1);
 
                     self.compile_expr(right)?;
-                    self.bytecode.patch_jump(patch);
+                    self.bytecode.patch_jump(patch, JumpDest::Current);
                 }
                 token::LogicalOp::Or => {
                     self.compile_expr(left)?;
-                    let op = JumpOp::OnTrue(Address::default());
-                    let (addr, patch) = self.bytecode.emit_jump(op);
-                    self.debug_info.push_expr(loc, kind.into(), addr);
+                    let (_, patch) = self.bytecode.emit_jump(JumpKind::OnTrue);
 
                     self.bytecode.emit_pop(1);
                     self.decr_depth(1);
 
                     self.compile_expr(right)?;
-                    self.bytecode.patch_jump(patch);
+                    self.bytecode.patch_jump(patch, JumpDest::Current);
                 }
             },
             ValExpr::Call { callee, args } => todo!(),
@@ -264,14 +260,7 @@ impl<'a> Compiler<'a> {
             self.decr_depth(1);
         } else {
             let offset = self.current_depth();
-            let id = self.debug_info.push_var(
-                loc,
-                self.interner.resolve(*name),
-                offset,
-                self.bytecode.current_address(),
-                0,
-            );
-            self.locals.push((*name, id));
+            self.locals.push((*name, offset));
         }
 
         Ok(())
@@ -294,20 +283,18 @@ impl<'a> Compiler<'a> {
     ) -> Result<(), CompileError> {
         self.compile_expr(condition)?;
 
-        let (_, patch_cond) = self.bytecode.emit_jump(JumpOp::OnFalse(Address::default()));
+        let (_, patch_cond) = self.bytecode.emit_jump(JumpKind::OnFalse);
         self.compile_stmt(then)?;
 
         match otherwise {
             Some(stmt) => {
-                let (_, patch_then) = self
-                    .bytecode
-                    .emit_jump(JumpOp::Unconditional(Address::default()));
-                self.bytecode.patch_jump(patch_cond);
+                let (_, patch_then) = self.bytecode.emit_jump(JumpKind::Unconditional);
+                self.bytecode.patch_jump(patch_cond, JumpDest::Current);
                 self.compile_stmt(stmt)?;
-                self.bytecode.patch_jump(patch_then);
+                self.bytecode.patch_jump(patch_then, JumpDest::Current);
             }
             _ => {
-                self.bytecode.patch_jump(patch_cond);
+                self.bytecode.patch_jump(patch_cond, JumpDest::Current);
             }
         }
 
@@ -321,21 +308,23 @@ impl<'a> Compiler<'a> {
         let start = self.bytecode.current_address();
 
         self.compile_expr(condition)?;
-        let (_, patch) = self.bytecode.emit_jump(JumpOp::OnFalse(Address::default()));
+        let (_, patch) = self.bytecode.emit_jump(JumpKind::OnFalse);
 
         self.bytecode.emit_pop(1); // drop condition
         self.decr_depth(1);
         self.compile_stmt(body)?;
 
-        self.bytecode.emit_jump(JumpOp::Unconditional(start));
+        let (_, end_patch) = self.bytecode.emit_jump(JumpKind::Unconditional);
+        self.bytecode.patch_jump(end_patch, JumpDest::Addr(start));
 
-        self.bytecode.patch_jump(patch);
+        self.bytecode.patch_jump(patch, JumpDest::Current);
         self.bytecode.emit_pop(1); // drop condition
 
         Ok(())
     }
 
-    fn compile_function(&mut self, func: &StmtFunctionId) -> Result<(), CompileError> {
+    fn compile_function(&mut self, func: &StmtFunctionId, loc: &Loc) -> Result<(), CompileError> {
+        let StmtFunctionL { func, loc } = self.ast.get_func(func);
         todo!()
     }
 
@@ -371,33 +360,33 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn get_variable(&self, id: &ExprId, key: &Key) -> Option<(Offset, VarKind)> {
+    fn get_variable(&self, id: &ExprId, key: &Key) -> Option<(StackIdx, VarKind)> {
         match self.resolve_map.distance(*id) {
             None => self.get_global(key).map(|v| (v, VarKind::Global)),
             Some(_) => self.get_local(key).map(|v| (v, VarKind::Local)), // TODO: check upvalue
         }
     }
 
-    fn get_global(&self, key: &Key) -> Option<Offset> {
+    fn get_global(&self, key: &Key) -> Option<StackIdx> {
         self.globals.get(key).cloned()
     }
 
-    fn get_local(&self, key: &Key) -> Option<Offset> {
+    fn get_local(&self, key: &Key) -> Option<StackIdx> {
         let var = self.locals.iter().rev().find(|v| v.0 == *key);
-        var.map(|v| self.debug_info.get_var(v.1)).map(|v| v.offset)
+        var.map(|v| v.1)
     }
 
-    fn current_depth(&self) -> Offset {
-        Offset(self.stack_depth)
+    fn current_depth(&self) -> StackIdx {
+        StackIdx(self.stack_depth)
     }
 
-    fn incr_depth(&mut self, amount: u32) -> Offset {
+    fn incr_depth(&mut self, amount: u32) -> StackIdx {
         self.stack_depth += amount;
-        Offset(self.stack_depth)
+        StackIdx(self.stack_depth)
     }
 
-    fn decr_depth(&mut self, amount: u32) -> Offset {
+    fn decr_depth(&mut self, amount: u32) -> StackIdx {
         self.stack_depth -= amount;
-        Offset(self.stack_depth)
+        StackIdx(self.stack_depth)
     }
 }

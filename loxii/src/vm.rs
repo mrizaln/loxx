@@ -4,7 +4,7 @@ use boolinator::Boolinator;
 use thiserror::Error;
 
 use crate::bytecode::{
-    Address, BinOp, Bytecode, BytecodeError, JumpOp, LoadOp, Offset, Op, StoreOp, UnaryOp,
+    BinOp, Bytecode, BytecodeError, InstrOff, JumpOp, LoadOp, Op, StackIdx, StoreOp, UnaryOp,
 };
 use crate::memory::{Heap, HeapValue, MemoryError, Stack};
 use crate::value::{Constant, Value, ValueError};
@@ -46,9 +46,9 @@ impl Vm {
     pub fn interpret(&mut self, program: &Bytecode) -> Result<(), RuntimeError> {
         let mut reader = program.into_iter();
 
-        while let Some((_, op)) = reader.next() {
-            // let before = self.stack.len();
-            // let op_str = format!("{op:?}");
+        while let Some((_addr, op)) = reader.next() {
+            let before = self.stack.len();
+            let op_str = format!("{op:?}");
             match op? {
                 Op::Pop(amount) => _ = self.stack.pop_multi(amount as usize),
                 Op::Upvalue => todo!(),
@@ -60,7 +60,13 @@ impl Vm {
                 Op::Binary(bin_op) => self.interpret_binary(bin_op)?,
                 Op::Print => self.interpret_print()?,
             };
-            // eprintln!("{:>2} -> {:>2} | {op_str}", before, self.stack.len());
+            eprintln!(
+                "{:>2} -> {:>2} | [{:>010x}] -> {:>010x}] | {op_str}",
+                before,
+                self.stack.len(),
+                _addr.0,
+                reader.index()
+            );
         }
 
         Ok(())
@@ -104,16 +110,16 @@ impl Vm {
         };
     }
 
-    fn interpret_jump(&mut self, jump: JumpOp) -> Result<Option<Address>, RuntimeError> {
+    fn interpret_jump(&mut self, jump: JumpOp) -> Result<Option<InstrOff>, RuntimeError> {
         match jump {
-            JumpOp::Unconditional(address) => Ok(Some(address)),
-            JumpOp::OnFalse(address) => {
+            JumpOp::Unconditional(off) => Ok(Some(off)),
+            JumpOp::OnFalse(off) => {
                 let value = self.stack.top_mut()?;
-                Ok(value.truthy().not().as_some(address))
+                Ok(value.truthy().not().as_some(off))
             }
-            JumpOp::OnTrue(address) => {
+            JumpOp::OnTrue(off) => {
                 let value = self.stack.top_mut()?;
-                Ok(value.truthy().as_some(address))
+                Ok(value.truthy().as_some(off))
             }
         }
     }
@@ -154,7 +160,7 @@ impl Vm {
         Ok(())
     }
 
-    fn abs_offset(&self, offset: &Offset) -> usize {
+    fn abs_offset(&self, offset: &StackIdx) -> usize {
         offset.0 as usize + self.stack_offset - 1
     }
 }
