@@ -12,6 +12,7 @@ pub struct Interner {
     pub key_this: Key,
     pub key_super: Key,
     pub key_init: Key,
+    pub key_global: Key,
 }
 
 impl Interner {
@@ -21,16 +22,21 @@ impl Interner {
             key_this: Key::default(),
             key_super: Key::default(),
             key_init: Key::default(),
+            key_global: Key::default(),
         };
+
         for keyword in Keyword::iter() {
             interner.get_or_intern(keyword.as_str());
         }
         for special in Special::iter() {
             interner.get_or_intern(special.as_str());
         }
+
         interner.key_this = interner.keyword(Keyword::This);
         interner.key_super = interner.keyword(Keyword::Super);
         interner.key_init = interner.special(Special::Init);
+        interner.key_global = interner.get_or_intern("global");
+
         interner
     }
 
